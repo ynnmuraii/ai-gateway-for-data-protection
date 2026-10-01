@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.runtime/
+.superpowers/
+test-results/
+playwright-report/
+coverage.xml
+.coverage
+
+# Local project materials and context (kept on disk).
+/docs/
