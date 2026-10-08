@@ -1,0 +1,29 @@
+{
+    auto_https off
+    admin off
+}
+
+:80 {
+    # The public admin listener never exposes the trusted client integration.
+    @integration path /v1 /v1/*
+    respond @integration 404
+    reverse_proxy gateway:8000 {
+        header_up -X-OpenWebUI-User-JWT
+        header_up -X-OpenWebUI-Chat-Id
+        header_up -X-OpenWebUI-User-Id
+    }
+}
+
+:3000 {
+    # First-user bootstrap is accessible only to the internal operator helper.
+    @unsupported path /api/v1/auths/signup* /api/v1/files* /api/v1/tools* /api/v1/functions* /api/v1/knowledge* /api/v1/retrieval* /api/v1/audio* /api/v1/images* /api/v1/tasks* /api/v1/pipelines* /api/v1/terminal* /api/chat/actions/* /api/message /api/v1/messages /api/responses /ollama/*
+    respond @unsupported 403
+    reverse_proxy openwebui:8080 {
+        # Browser-supplied assertions cannot override the backend-issued JWT.
+        header_up -X-OpenWebUI-User-JWT
+        header_up -X-OpenWebUI-Chat-Id
+        header_up -X-OpenWebUI-User-Id
+        header_up -X-OpenWebUI-User-Role
+        flush_interval -1
+    }
+}
