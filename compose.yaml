@@ -1,0 +1,198 @@
+name: confidential-ai-gateway
+
+x-gateway-environment: &gateway-environment
+  GATEWAY_DATABASE_URL: ${GATEWAY_DATABASE_URL:?Run scripts/prepare-compose.py first}
+  GATEWAY_PUBLIC_ORIGIN: ${GATEWAY_PUBLIC_ORIGIN:-http://localhost:8080}
+  GATEWAY_DEMO_MODE: ${GATEWAY_DEMO_MODE:-true}
+  GATEWAY_PROVIDER_SECRET: ${GATEWAY_PROVIDER_SECRET:-}
+  GATEWAY_PROVIDER_SECRET_REF: ${GATEWAY_PROVIDER_SECRET_REF:-provider-default}
+  GATEWAY_PROVIDER_ALLOWED_HOSTS: ${GATEWAY_PROVIDER_ALLOWED_HOSTS:-api.openai.com}
+  GATEWAY_CSRF_SECRET: ${GATEWAY_CSRF_SECRET:?Required}
+  GATEWAY_PSEUDONYM_SECRET: ${GATEWAY_PSEUDONYM_SECRET:?Required}
+  GATEWAY_IDENTITY_SECRET: ${GATEWAY_IDENTITY_SECRET:?Required}
+  GATEWAY_DETECTOR_WORKERS: "2"
+  GATEWAY_DETECTOR_QUEUE_SIZE: "6"
+
+services:
+  postgres:
+    image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command: [postgres, -c, log_statement=none, -c, log_min_error_statement=panic]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U gateway_owner -d gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  install:
+    image: confidential-ai-gateway:local
+    build: .
+    environment:
+      <<: *gateway-environment
+      GATEWAY_INSTALL_DATABASE_URL: ${GATEWAY_INSTALL_DATABASE_URL:?Required}
+      GATEWAY_RUNTIME_PASSWORD: ${GATEWAY_RUNTIME_PASSWORD:?Required}
+      GATEWAY_BOOTSTRAP_USERNAME: ${GATEWAY_BOOTSTRAP_USERNAME:-admin}
+      GATEWAY_BOOTSTRAP_PASSWORD: ${GATEWAY_BOOTSTRAP_PASSWORD:?Required}
+      GATEWAY_BOOTSTRAP_INTEGRATION_KEY: ${GATEWAY_BOOTSTRAP_INTEGRATION_KEY:?Required}
+    command: [python, scripts/bootstrap-compose.py]
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+  gateway:
+    image: confidential-ai-gateway:local
+    build: .
+    environment: *gateway-environment
+    depends_on:
+      install: {condition: service_completed_successfully}
+    networks: [private, provider-egress]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+    restart: unless-stopped
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:v0.11.4-slim@sha256:0487ad4a5a4b986062dedace806c3ef1e88fec38c10d1e64d6a5501c66671e5e
+    environment:
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?Required}
+      WEBUI_AUTH: "true"
+      WEBUI_URL: http://localhost:3000
+      ENABLE_SIGNUP: "false"
+      DEFAULT_USER_ROLE: pending
+      ENABLE_PERSISTENT_CONFIG: "false"
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_OPENAI_API: "true"
+      OPENAI_API_BASE_URLS: http://gateway:8000/v1
+      OPENAI_API_KEYS: ${GATEWAY_BOOTSTRAP_INTEGRATION_KEY:?Required}
+      OPENAI_API_CONFIGS: '{"0":{"enable":true,"auth_type":"bearer","headers":{"X-OpenWebUI-Chat-Id":"{{CHAT_ID}}"}}}'
+      DEFAULT_MODELS: demo-model
+      DEFAULT_MODEL_METADATA: '{"capabilities":{"vision":false,"file_upload":false,"web_search":false,"code_interpreter":false,"image_generation":false,"builtin_tools":false,"terminal":false}}'
+      ENABLE_FORWARD_USER_INFO_HEADERS: "true"
+      FORWARD_USER_INFO_HEADER_JWT_SECRET: ${GATEWAY_IDENTITY_SECRET:?Required}
+      FORWARD_USER_INFO_HEADER_JWT: X-OpenWebUI-User-JWT
+      FORWARD_USER_INFO_HEADER_JWT_EXPIRES_SECONDS: "300"
+      ENABLE_DIRECT_CONNECTIONS: "false"
+      ENABLE_DIRECT_INTEGRATIONS: "false"
+      ENABLE_OPENAI_API_PASSTHROUGH: "false"
+      ENABLE_PLUGINS: "false"
+      SAFE_MODE: "true"
+      ENABLE_CODE_EXECUTION: "false"
+      ENABLE_CODE_INTERPRETER: "false"
+      ENABLE_KB_EXEC: "false"
+      ENABLE_MEMORIES: "false"
+      ENABLE_MEMORY_SYSTEM_CONTEXT: "false"
+      ENABLE_WEB_SEARCH: "false"
+      ENABLE_IMAGE_GENERATION: "false"
+      ENABLE_FOLDERS: "false"
+      ENABLE_NOTES: "false"
+      ENABLE_CHANNELS: "false"
+      ENABLE_CALENDAR: "false"
+      ENABLE_AUTOMATIONS: "false"
+      ENABLE_SUBAGENTS: "false"
+      ENABLE_CONTEXT_COMPACTION: "false"
+      ENABLE_TITLE_GENERATION: "false"
+      ENABLE_TAGS_GENERATION: "false"
+      ENABLE_FOLLOW_UP_GENERATION: "false"
+      ENABLE_AUTOCOMPLETE_GENERATION: "false"
+      ENABLE_SEARCH_QUERY_GENERATION: "false"
+      ENABLE_RETRIEVAL_QUERY_GENERATION: "false"
+      ENABLE_VOICE_MODE_PROMPT: "false"
+      ENABLE_EVALUATION_ARENA_MODELS: "false"
+      ENABLE_COMMUNITY_SHARING: "false"
+      ENABLE_USER_WEBHOOKS: "false"
+      ENABLE_API_KEYS: "false"
+      TOOL_SERVER_CONNECTIONS: '[]'
+      TERMINAL_SERVER_CONNECTIONS: '[]'
+      AUDIO_STT_ENGINE: ""
+      AUDIO_TTS_ENGINE: ""
+      USER_PERMISSIONS_CHAT_FILE_UPLOAD: "false"
+      USER_PERMISSIONS_CHAT_WEB_UPLOAD: "false"
+      USER_PERMISSIONS_CHAT_STT: "false"
+      USER_PERMISSIONS_CHAT_TTS: "false"
+      USER_PERMISSIONS_CHAT_CALL: "false"
+      USER_PERMISSIONS_CHAT_PARAMS: "false"
+      USER_PERMISSIONS_CHAT_VALVES: "false"
+      USER_PERMISSIONS_CHAT_MULTIPLE_MODELS: "false"
+      USER_PERMISSIONS_FEATURES_WEB_SEARCH: "false"
+      USER_PERMISSIONS_FEATURES_IMAGE_GENERATION: "false"
+      USER_PERMISSIONS_FEATURES_CODE_INTERPRETER: "false"
+      USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS: "false"
+      USER_PERMISSIONS_FEATURES_MEMORIES: "false"
+      USER_PERMISSIONS_CHAT_SHARE: "false"
+      GLOBAL_LOG_LEVEL: INFO
+      AUDIT_LOG_LEVEL: NONE
+      ENABLE_AUDIT_STDOUT: "false"
+      ENABLE_AUDIT_LOGS_FILE: "false"
+      OFFLINE_MODE: "true"
+      ENABLE_VERSION_UPDATE_CHECK: "false"
+    volumes: [openwebui-data:/app/backend/data]
+    networks: [private]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+    restart: unless-stopped
+
+  proxy:
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    ports: ["127.0.0.1:8080:80", "127.0.0.1:3000:3000"]
+    volumes: [./deploy/Caddyfile:/etc/caddy/Caddyfile:ro]
+    depends_on:
+      gateway: {condition: service_healthy}
+      openwebui: {condition: service_healthy}
+    networks: [private, listeners]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:80/health/live]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  connect-openwebui:
+    profiles: [tools]
+    image: confidential-ai-gateway:local
+    environment:
+      <<: *gateway-environment
+      GATEWAY_INSTALL_DATABASE_URL: ${GATEWAY_INSTALL_DATABASE_URL:?Required}
+      GATEWAY_BOOTSTRAP_INTEGRATION_KEY: ${GATEWAY_BOOTSTRAP_INTEGRATION_KEY:?Required}
+      WEBUI_ADMIN_EMAIL: ${WEBUI_ADMIN_EMAIL:?Required}
+      WEBUI_ADMIN_PASSWORD: ${WEBUI_ADMIN_PASSWORD:?Required}
+      WEBUI_USER_EMAIL: ${WEBUI_USER_EMAIL:?Required}
+      WEBUI_USER_PASSWORD: ${WEBUI_USER_PASSWORD:?Required}
+    command: [python, scripts/connect-openwebui.py, --internal, --url, http://openwebui:8080]
+    depends_on:
+      gateway: {condition: service_healthy}
+      openwebui: {condition: service_healthy}
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  postgres-data:
+  openwebui-data:
+
+networks:
+  private: {internal: true}
+  provider-egress:
+  listeners:
