@@ -62,7 +62,7 @@ def profile_manifest(cidrs=PRIVATE_CIDRS, hostname_suffixes=HOST_SUFFIXES):
             packages[name] = "missing"
     return {
         "schema": "gateway-detector-v1",
-        "enabled_categories": ['EMAIL'],
+        "enabled_categories": ['EMAIL', 'JWT'],
         "packages": packages,
         "languages": LANGUAGES,
         "regions": ["RU", "US", "GB"],
@@ -254,4 +254,4 @@ class Detector:
                 for match in pattern.finditer(text):
                     if _boundary(text, *match.span(), hostname=category == "INTERNAL_HOSTNAME"):
                         add(*match.span(), category, 1.0, "dictionary-v1")
-        return sorted((f for f in results.values() if f.category in ['EMAIL']), key=lambda f: (f.message_index, f.start, f.end, f.category))
+        return sorted((f for f in results.values() if f.category in ['EMAIL', 'JWT']), key=lambda f: (f.message_index, f.start, f.end, f.category))
