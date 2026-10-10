@@ -101,6 +101,49 @@ async def models(request: Request):
     }
 
 
+@router.post("/admin/api/preview")
+async def preview(request: Request, admin: Admin):
+    raw = load_json(await body_bytes(request))
+    if not isinstance(raw, dict) or set(raw) - {"messages", "policy_version_id"}:
+        raise GatewayError(400, "invalid_request")
+    parsed = parse_chat(
+        json.dumps({"model": "preview", "messages": raw.get("messages")}, ensure_ascii=True).encode()
+    )
+    try:
+        policy_id = UUID(raw["policy_version_id"]) if raw.get("policy_version_id") else None
+    except (ValueError, TypeError):
+        raise GatewayError(400, "invalid_request") from None
+    user = str(admin["id"])
+    request.app.state.inflight.acquire(user)
+    start = time.monotonic()
+    try:
+        snap = await db_call(audit.snapshot, request.app.state.engine, policy_id)
+        findings = await request.app.state.detector_pool.analyze(parsed["messages"], snap["dictionaries"])
+        scope = {
+            "integration_id": "00000000-0000-0000-0000-000000000000",
+            "issuer": "admin-preview",
+            "sub": user,
+            "user_id": user,
+            "chat_id": "preview",
+        }
+        result = protect(
+            parsed["messages"],
+            findings,
+            snap["actions"],
+            scope,
+            request.app.state.settings.pseudonym_secret.encode(),
+        )
+        return {
+            "decision": result.decision,
+            "messages": [] if result.decision == "BLOCK" else result.messages,
+            "findings": [{"category": category, "count": count} for category, count in result.counts.items()],
+            "policy_version_id": str(snap["policy"]["id"]),
+            "duration_ms": int((time.monotonic() - start) * 1000),
+        }
+    except DetectorError as exc:
+        raise GatewayError(exc.status_code, exc.code) from None
+    finally:
+        request.app.state.inflight.release(user)
 
 
 @router.post("/v1/chat/completions")
