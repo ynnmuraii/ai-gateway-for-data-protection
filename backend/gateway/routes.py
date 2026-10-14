@@ -78,7 +78,7 @@ class ObservedStream(StreamingResponse):
 async def body_bytes(request):
     if request.headers.get("content-encoding", "identity") != "identity":
         raise GatewayError(400, "invalid_request")
-    if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
         raise GatewayError(415, "invalid_content_type")
     data = bytearray()
     async for chunk in request.stream():
