@@ -9,6 +9,7 @@ import re
 from .types import CATEGORIES, DetectorError, Finding, validate_messages
 
 LANGUAGES = {"ru": "ru_core_news_sm", "en": "en_core_web_sm"}
+NLP_EXCLUDED_PIPES = ("tok2vec", "tagger", "morphologizer", "parser", "attribute_ruler", "lemmatizer", "ner", "senter")
 PRIVATE_CIDRS = (
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -51,6 +52,7 @@ TOKEN_ASSIGNMENT = re.compile(
     r"(?:\bauthorization\s*:\s*bearer\s+|\b(?:access[_-]?token|token)\s*[:=]\s*[\"']?)([A-Za-z0-9._~+/-]{16,2048}=*)",
     re.IGNORECASE,
 )
+EMAIL_FIELD_PREFIX = re.compile(r"(?:e-?mail(?:_address)?|address)=", re.IGNORECASE)
 
 
 def profile_manifest(cidrs=PRIVATE_CIDRS, hostname_suffixes=HOST_SUFFIXES):
@@ -62,9 +64,10 @@ def profile_manifest(cidrs=PRIVATE_CIDRS, hostname_suffixes=HOST_SUFFIXES):
             packages[name] = "missing"
     return {
         "schema": "gateway-detector-v1",
-        "enabled_categories": ['EMAIL', 'JWT'],
+        "enabled_categories": list(CATEGORIES),
         "packages": packages,
         "languages": LANGUAGES,
+        "nlp_pipeline": {"mode": "tokenizer-only", "excluded": NLP_EXCLUDED_PIPES},
         "regions": ["RU", "US", "GB"],
         "cidrs": list(cidrs),
         "hostname_suffixes": list(hostname_suffixes),
@@ -78,6 +81,7 @@ def profile_manifest(cidrs=PRIVATE_CIDRS, hostname_suffixes=HOST_SUFFIXES):
         "thresholds": {"email-local-v1": 0.5, "phone-v1": 0.4},
         "coordinates": "original-python-unicode-half-open-v1",
         "validators": "local-format-v1",
+        "span_normalization": {"email_field_prefix": EMAIL_FIELD_PREFIX.pattern, "phone_wrappers": "unbalanced-v1"},
         "dictionary": "exact-or-explicit-ignorecase-unicode-boundaries-v1",
     }
 
@@ -85,6 +89,28 @@ def profile_manifest(cidrs=PRIVATE_CIDRS, hostname_suffixes=HOST_SUFFIXES):
 def profile_checksum(cidrs=PRIVATE_CIDRS, hostname_suffixes=HOST_SUFFIXES):
     data = json.dumps(profile_manifest(cidrs, hostname_suffixes), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(data.encode()).hexdigest()
+
+
+def sprint1_profile_checksum():
+    return previous_profile_checksums()["sprint1"]
+
+
+def previous_profile_checksums():
+    """Only reviewed saved bundles qualify; model/package version drift still needs review."""
+    manifest = profile_manifest()
+    manifest.pop("span_normalization")
+    manifest.pop("nlp_pipeline")
+    checksums = {}
+    for name, categories in (("sprint1", ["EMAIL", "JWT"]), ("prototype", None),
+                             ("sprint2-initial", list(CATEGORIES))):
+        previous = manifest.copy()
+        if categories is None:
+            previous.pop("enabled_categories")
+        else:
+            previous["enabled_categories"] = categories
+        data = json.dumps(previous, sort_keys=True, separators=(",", ":"))
+        checksums[name] = hashlib.sha256(data.encode()).hexdigest()
+    return checksums
 
 
 def _valid_jwt(value):
@@ -112,6 +138,21 @@ def _boundary(text, start, end, hostname=False):
     return (
         start == 0 or not (text[start - 1].isalnum() or text[start - 1] == "_" or text[start - 1] in extra)
     ) and (end == len(text) or not (text[end].isalnum() or text[end] == "_" or text[end] in extra))
+
+
+def _recognizer_span(text, start, end, category):
+    if category == "EMAIL":
+        # Known log field labels are context; '=' and '+' elsewhere remain valid local-part characters.
+        candidate = text[start:end]
+        prefix = EMAIL_FIELD_PREFIX.match(candidate)
+        if prefix and prefix.end() < candidate.rfind("@"):
+            start += prefix.end()
+    elif category == "PHONE":
+        while start < end and text[start] == "[":
+            start += 1
+        while start < end and text[start] == "(" and text[start:end].count("(") > text[start:end].count(")"):
+            start += 1
+    return start, end
 
 
 class Detector:
@@ -143,7 +184,8 @@ class Detector:
                 models=[{"lang_code": lang, "model_name": name} for lang, name in LANGUAGES.items()]
             )
             # Load installed packages directly; never call SpacyNlpEngine.load(), which downloads missing weights.
-            engine.nlp = {lang: spacy.load(name) for lang, name in LANGUAGES.items()}
+            # These recognizers use regex/phone parsing; NER, tagging and parsing add no findings.
+            engine.nlp = {lang: spacy.load(name, exclude=NLP_EXCLUDED_PIPES) for lang, name in LANGUAGES.items()}
             registry = RecognizerRegistry(supported_languages=list(LANGUAGES))
             for lang in LANGUAGES:
                 registry.add_recognizer(
@@ -205,10 +247,11 @@ class Detector:
                     text=text, language=language, entities=["EMAIL", "PHONE"], score_threshold=0.4
                 ):
                     threshold = 0.5 if f.entity_type == "EMAIL" else 0.4
-                    if f.score >= threshold and _boundary(text, f.start, f.end):
+                    start, end = _recognizer_span(text, f.start, f.end, f.entity_type)
+                    if f.score >= threshold and _boundary(text, start, end):
                         add(
-                            f.start,
-                            f.end,
+                            start,
+                            end,
                             f.entity_type,
                             f.score,
                             "email-local-v1" if f.entity_type == "EMAIL" else "phone-v1",
@@ -254,4 +297,4 @@ class Detector:
                 for match in pattern.finditer(text):
                     if _boundary(text, *match.span(), hostname=category == "INTERNAL_HOSTNAME"):
                         add(*match.span(), category, 1.0, "dictionary-v1")
-        return sorted((f for f in results.values() if f.category in ['EMAIL', 'JWT']), key=lambda f: (f.message_index, f.start, f.end, f.category))
+        return sorted(results.values(), key=lambda f: (f.message_index, f.start, f.end, f.category))
