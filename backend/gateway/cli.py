@@ -8,7 +8,7 @@ import sys
 from psycopg import Error as PostgreSQLError
 from sqlalchemy.exc import SQLAlchemyError
 
-from .db import bootstrap, make_engine, migrate, reset_admin
+from .db import bootstrap, make_engine, migrate, reset_admin, upgrade_detector
 from .settings import Settings
 
 
@@ -16,6 +16,8 @@ def main():
     parser = argparse.ArgumentParser(description="Manage the local AI gateway installation.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("migrate")
+    upgrade = commands.add_parser("upgrade-detector", help="Explicitly upgrade a reviewed previous detector bundle.")
+    upgrade.add_argument("--username", default="admin")
     install = commands.add_parser("bootstrap")
     install.add_argument("--username", default="admin")
     install.add_argument("--external-subject", default="demo-user")
@@ -30,6 +32,10 @@ def main():
         if args.command == "migrate":
             migrate(engine)
             print("Database migration completed.")
+            return
+        if args.command == "upgrade-detector":
+            result = upgrade_detector(engine, args.username)
+            print(f'Detector upgrade: {result["status"]}; active policy revision {result["revision"]}.')
             return
         password = os.environ.get("GATEWAY_BOOTSTRAP_PASSWORD")
         key = os.environ.get("GATEWAY_BOOTSTRAP_INTEGRATION_KEY")
