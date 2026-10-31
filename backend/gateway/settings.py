@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     provider_secret: str = ""
     provider_secret_ref: str = "provider-default"
     provider_allowed_hosts: str = "api.openai.com"
+    provider_base_url: str = Field(default="https://api.openai.com/v1", min_length=1, max_length=2048)
+    provider_label: str = Field(default="OpenAI", min_length=1, max_length=128)
+    provider_model: str = Field(default="gpt-4o-mini", min_length=1, max_length=128)
     demo_mode: bool = False
     detector_workers: int = 2
     detector_queue_size: int = 6
