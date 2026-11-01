@@ -85,7 +85,8 @@ class Boundary:
                     if not message.get("more_body", False):
                         break
                 if body and any(
-                    k == b"content-type" and v.split(b";")[0] == b"application/json" for k, v in headers
+                    k == b"content-type" and v.split(b";")[0].strip().lower() == b"application/json"
+                    for k, v in headers
                 ):
                     load_json(
                         bytes(body)
