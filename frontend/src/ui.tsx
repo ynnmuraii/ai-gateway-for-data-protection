@@ -56,24 +56,28 @@ export function Field({
   hint?: string;
 }) {
   const id = useId();
+  const hintId = hint ? id + "-hint" : undefined;
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
+      {hint && <small id={hintId}>{hint}</small>}
       <div>
         {typeof children === "object" && children !== null ? (
-          <FieldControl id={id}>{children}</FieldControl>
+          <FieldControl id={id} hintId={hintId}>{children}</FieldControl>
         ) : (
           children
         )}
       </div>
-      {hint && <small>{hint}</small>}
     </div>
   );
 }
 import { cloneElement, isValidElement } from "react";
-function FieldControl({ id, children }: { id: string; children: ReactNode }) {
-  return isValidElement<{ id?: string }>(children)
-    ? cloneElement(children, { id })
+function FieldControl({ id, hintId, children }: { id: string; hintId?: string; children: ReactNode }) {
+  return isValidElement<{ id?: string; "aria-describedby"?: string }>(children)
+    ? cloneElement(children, {
+        id,
+        "aria-describedby": [children.props["aria-describedby"], hintId].filter(Boolean).join(" ") || undefined,
+      })
     : children;
 }
 export function ErrorBox({ error }: { error: unknown }) {
@@ -232,56 +236,37 @@ export function Modal({
   children: ReactNode;
   onClose: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const root = ref.current;
-    root?.querySelector<HTMLElement>("button,input,select,textarea")?.focus();
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeRef.current();
-      if (event.key === "Tab" && root) {
-        const all = [
-          ...root.querySelectorAll<HTMLElement>(
-            'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
-          ),
-        ];
-        const first = all[0],
-          last = all[all.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last?.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first?.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", key);
+    root?.showModal();
     const old = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", key);
+      root?.close();
       document.body.style.overflow = old;
       previous?.focus();
     };
   }, []);
   return (
-    <div
-      className="modal-backdrop"
+    <dialog
+      className="modal"
+      ref={ref}
+      aria-labelledby={titleId}
+      onCancel={(event) => {
+        event.preventDefault();
+        closeRef.current();
+      }}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target !== e.currentTarget) return;
+        const bounds = e.currentTarget.getBoundingClientRect();
+        if (e.clientX < bounds.left || e.clientX > bounds.right || e.clientY < bounds.top || e.clientY > bounds.bottom) onClose();
       }}
     >
-      <div
-        className="modal"
-        ref={ref}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-      >
         <div className="panel-head">
           <h2 id={titleId}>{title}</h2>
           <button
@@ -294,8 +279,7 @@ export function Modal({
           </button>
         </div>
         {children}
-      </div>
-    </div>
+    </dialog>
   );
 }
 export function ConfirmButton({

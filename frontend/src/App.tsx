@@ -2,15 +2,68 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, setSession } from "./api";
 import type { Session } from "./types";
 import { ErrorBox, Field, NotifyContext, Spinner, useTask } from "./ui";
-import { PreviewPage } from "./pages/Activity";
+import { Dashboard, Audit, PreviewPage } from "./pages/Activity";
+import { Policies, Dictionaries } from "./pages/Protection";
+import { Users, Integrations } from "./pages/Access";
+import { Settings } from "./pages/Settings";
 
 const navigation = [
-  {"id": "preview", "label": "Проверка текста", "icon": "◇", "group": "Рабочее пространство", "description": "Предпросмотр без вызова провайдера"},
+  {
+    id: "dashboard",
+    label: "Обзор",
+    icon: "◫",
+    group: "Рабочее пространство",
+    description: "Защита данных перед отправкой в AI",
+  },
+  {
+    id: "audit",
+    label: "Журнал запросов",
+    icon: "≡",
+    description: "Решения и безопасные метаданные запросов",
+  },
+  {
+    id: "preview",
+    label: "Проверка текста",
+    icon: "⌕",
+    description: "Посмотрите, что увидит внешний провайдер",
+  },
+  {
+    id: "policies",
+    label: "Политики",
+    icon: "◇",
+    group: "Защита",
+    description: "Правила обработки чувствительных данных",
+  },
+  {
+    id: "dictionaries",
+    label: "Словари",
+    icon: "▤",
+    description: "Корпоративные значения и их версии",
+  },
+  {
+    id: "users",
+    label: "Пользователи",
+    icon: "♙",
+    group: "Управление",
+    description: "Локальные учётные записи и внешние идентификаторы",
+  },
+  {
+    id: "integrations",
+    label: "Интеграции",
+    icon: "⇄",
+    description: "Доверенные клиенты и ключи доступа",
+  },
+  {
+    id: "settings",
+    label: "Настройки",
+    icon: "⚙",
+    description: "Провайдер, модели и хранение журнала",
+  },
 ] as const;
 type Route = (typeof navigation)[number]["id"];
 function currentRoute(): Route {
   const route = location.hash.slice(1);
-  return navigation.find((n) => n.id === route)?.id ?? "preview";
+  return navigation.find((n) => n.id === route)?.id ?? "dashboard";
 }
 export default function App() {
   const [session, updateSession] = useState<Session | null>(null);
@@ -65,6 +118,9 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
   const active = navigation.find((n) => n.id === route)!;
+  useEffect(() => {
+    document.title = `${session ? active.label : "Вход"} · Контур AI Gateway`;
+  }, [active.label, !!session]);
   const login = (value: Session) => {
     setSession(value);
     updateSession(value);
@@ -112,7 +168,7 @@ export default function App() {
       </a>
       <div className="app-shell">
         <aside className={`sidebar ${menu ? "is-open" : ""}`}>
-          <a className="brand" href="#preview">
+          <a className="brand" href="#dashboard">
             <span className="brand-mark">К</span>
             <span>
               Контур<small>AI Gateway</small>
@@ -168,7 +224,6 @@ export default function App() {
         <main id="content" className="main" tabIndex={-1}>
           <header className="page-header">
             <div>
-              <div className="eyebrow">Управление шлюзом</div>
               <h1>{active.label}</h1>
               <p>{active.description}</p>
             </div>
@@ -181,7 +236,23 @@ export default function App() {
             </button>
           </header>
           <div className="page-body" key={route}>
-            {route === "preview" && <PreviewPage />}
+            {route === "dashboard" ? (
+              <Dashboard />
+            ) : route === "audit" ? (
+              <Audit />
+            ) : route === "preview" ? (
+              <PreviewPage />
+            ) : route === "policies" ? (
+              <Policies />
+            ) : route === "dictionaries" ? (
+              <Dictionaries />
+            ) : route === "users" ? (
+              <Users currentUserId={session.user.id} />
+            ) : route === "integrations" ? (
+              <Integrations />
+            ) : (
+              <Settings />
+            )}
           </div>
           <footer>Контур · Данные проверяются до передачи провайдеру</footer>
         </main>
@@ -244,13 +315,15 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
         <small>Одна организация. Один контур защиты.</small>
       </section>
       <section className="login-panel">
-        <div className="eyebrow">Панель администратора</div>
         <h2>Вход в систему</h2>
         <p>Используйте локальную учётную запись шлюза.</p>
-        <form onSubmit={submit}>
+        <form method="post" onSubmit={submit}>
           <Field label="Имя пользователя">
             <input
               autoComplete="username"
+              name="username"
+              autoCapitalize="none"
+              spellCheck={false}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
@@ -262,6 +335,7 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
             <input
               type="password"
               autoComplete="current-password"
+              name="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required

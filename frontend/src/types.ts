@@ -78,6 +78,13 @@ export interface Policy extends PolicySummary {
   rules: Rule[];
   dictionary_version_ids: string[];
 }
+export interface DetectorProfile {
+  id: string;
+  profile_name: string;
+  version: number;
+  bundle_checksum: string;
+  deployed: boolean;
+}
 export interface ActivePolicy {
   policy_version_id: string;
   policy_version: number;
