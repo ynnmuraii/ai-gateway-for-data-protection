@@ -1,6 +1,7 @@
 """Deliberately narrow, text-only wire profile. Never reflect rejected input."""
 
 import json
+import math
 import uuid
 from typing import Literal
 
@@ -58,11 +59,19 @@ def _unique(pairs):
     return obj
 
 
+def _finite_float(value):
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("nonfinite")
+    return result
+
+
 def load_json(data: bytes):
     try:
         return json.loads(
             data,
             object_pairs_hook=_unique,
+            parse_float=_finite_float,
             parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")),
         )
     except (ValueError, UnicodeDecodeError, RecursionError):
