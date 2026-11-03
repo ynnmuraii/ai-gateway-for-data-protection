@@ -7,6 +7,9 @@ x-gateway-environment: &gateway-environment
   GATEWAY_PROVIDER_SECRET: ${GATEWAY_PROVIDER_SECRET:-}
   GATEWAY_PROVIDER_SECRET_REF: ${GATEWAY_PROVIDER_SECRET_REF:-provider-default}
   GATEWAY_PROVIDER_ALLOWED_HOSTS: ${GATEWAY_PROVIDER_ALLOWED_HOSTS:-api.openai.com}
+  GATEWAY_PROVIDER_BASE_URL: ${GATEWAY_PROVIDER_BASE_URL:-https://api.openai.com/v1}
+  GATEWAY_PROVIDER_LABEL: ${GATEWAY_PROVIDER_LABEL:-OpenAI}
+  GATEWAY_PROVIDER_MODEL: ${GATEWAY_PROVIDER_MODEL:-gpt-4o-mini}
   GATEWAY_CSRF_SECRET: ${GATEWAY_CSRF_SECRET:?Required}
   GATEWAY_PSEUDONYM_SECRET: ${GATEWAY_PSEUDONYM_SECRET:?Required}
   GATEWAY_IDENTITY_SECRET: ${GATEWAY_IDENTITY_SECRET:?Required}
@@ -32,7 +35,7 @@ services:
     restart: unless-stopped
 
   install:
-    image: confidential-ai-gateway:local
+    image: ${GATEWAY_IMAGE:-confidential-ai-gateway:local}
     build: .
     environment:
       <<: *gateway-environment
@@ -50,7 +53,7 @@ services:
     security_opt: [no-new-privileges:true]
 
   gateway:
-    image: confidential-ai-gateway:local
+    image: ${GATEWAY_IMAGE:-confidential-ai-gateway:local}
     build: .
     environment: *gateway-environment
     depends_on:
@@ -74,7 +77,8 @@ services:
     environment:
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?Required}
       WEBUI_AUTH: "true"
-      WEBUI_URL: http://localhost:3000
+      WEBUI_URL: ${WEBUI_URL:-http://localhost:3000}
+      CORS_ALLOW_ORIGIN: ${WEBUI_URL:-http://localhost:3000}
       ENABLE_SIGNUP: "false"
       DEFAULT_USER_ROLE: pending
       ENABLE_PERSISTENT_CONFIG: "false"
@@ -83,7 +87,7 @@ services:
       OPENAI_API_BASE_URLS: http://gateway:8000/v1
       OPENAI_API_KEYS: ${GATEWAY_BOOTSTRAP_INTEGRATION_KEY:?Required}
       OPENAI_API_CONFIGS: '{"0":{"enable":true,"auth_type":"bearer","headers":{"X-OpenWebUI-Chat-Id":"{{CHAT_ID}}"}}}'
-      DEFAULT_MODELS: demo-model
+      DEFAULT_MODELS: ${GATEWAY_CHAT_MODEL:-demo-model}
       DEFAULT_MODEL_METADATA: '{"capabilities":{"vision":false,"file_upload":false,"web_search":false,"code_interpreter":false,"image_generation":false,"builtin_tools":false,"terminal":false}}'
       ENABLE_FORWARD_USER_INFO_HEADERS: "true"
       FORWARD_USER_INFO_HEADER_JWT_SECRET: ${GATEWAY_IDENTITY_SECRET:?Required}
@@ -155,7 +159,7 @@ services:
 
   proxy:
     image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
-    ports: ["127.0.0.1:8080:80", "127.0.0.1:3000:3000"]
+    ports: ["127.0.0.1:${GATEWAY_ADMIN_PORT:-8080}:80", "127.0.0.1:${GATEWAY_CHAT_PORT:-3000}:3000"]
     volumes: [./deploy/Caddyfile:/etc/caddy/Caddyfile:ro]
     depends_on:
       gateway: {condition: service_healthy}
@@ -170,7 +174,7 @@ services:
 
   connect-openwebui:
     profiles: [tools]
-    image: confidential-ai-gateway:local
+    image: ${GATEWAY_IMAGE:-confidential-ai-gateway:local}
     environment:
       <<: *gateway-environment
       GATEWAY_INSTALL_DATABASE_URL: ${GATEWAY_INSTALL_DATABASE_URL:?Required}
@@ -183,6 +187,20 @@ services:
     depends_on:
       gateway: {condition: service_healthy}
       openwebui: {condition: service_healthy}
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+  upgrade-detector:
+    profiles: [tools]
+    image: ${GATEWAY_IMAGE:-confidential-ai-gateway:local}
+    environment:
+      <<: *gateway-environment
+      GATEWAY_DATABASE_URL: ${GATEWAY_INSTALL_DATABASE_URL:?Required}
+    command: [python, -m, gateway.cli, upgrade-detector, --username, "${GATEWAY_BOOTSTRAP_USERNAME:-admin}"]
+    depends_on:
+      postgres: {condition: service_healthy}
     networks: [private]
     read_only: true
     tmpfs: [/tmp]

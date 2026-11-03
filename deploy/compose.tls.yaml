@@ -1,0 +1,18 @@
+# Use with compose.yaml from the repository root. Trust the private Caddy CA on clients.
+services:
+  proxy:
+    ports: !override
+      - "${GATEWAY_HTTPS_BIND:-0.0.0.0}:${GATEWAY_HTTPS_PORT:-8443}:443"
+    environment:
+      GATEWAY_ADMIN_HOST: ${GATEWAY_ADMIN_HOST:?Set the admin DNS name}
+      GATEWAY_CHAT_HOST: ${GATEWAY_CHAT_HOST:?Set the chat DNS name}
+    volumes: !override
+      - ./deploy/Caddyfile.tls:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/health/live]
+
+volumes:
+  caddy-data:
+  caddy-config:
