@@ -86,7 +86,7 @@ describe("administrator workflows", () => {
     const input = await screen.findByLabelText("Текст сообщения 1");
     fireEvent.change(input, { target: { value: "example-sensitive-secret" } });
     await userEvent.click(
-      screen.getByRole("button", { name: "Проверить текст →" }),
+      screen.getByRole("button", { name: "Проверить текст" }),
     );
     await screen.findByText(
       "Передача остановлена. Провайдер не получит сообщения.",
@@ -130,7 +130,7 @@ describe("administrator workflows", () => {
       target: { value: "analyst@example.com" },
     });
     await userEvent.click(
-      screen.getByRole("button", { name: "Проверить текст →" }),
+      screen.getByRole("button", { name: "Проверить текст" }),
     );
     await screen.findByText(payload);
     expect(document.querySelector("img")).toBeNull();
@@ -376,6 +376,18 @@ describe("administrator workflows", () => {
     await screen.findByText("Начало периода должно быть раньше окончания.");
     expect(fetcher.mock.calls.filter(([path]) => path.includes("/audit"))).toHaveLength(1);
   });
+  it("moves focus into the mobile navigation and restores its opener on Escape", async () => {
+    location.hash = "#preview";
+    mockApi(() => ({body: []}));
+    render(<App />);
+    await screen.findByLabelText("Текст сообщения 1");
+    const opener = screen.getByRole("button", {name: "Меню"});
+    await userEvent.click(opener);
+    expect(document.activeElement?.getAttribute("href")).toBe("#preview");
+    await userEvent.keyboard("{Escape}");
+    expect(document.activeElement).toBe(opener);
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+  });
   it("validates hidden dictionary pages and retains unrelated values after a filtered edit", async () => {
     location.hash = "#dictionaries";
     let dictionary = {
@@ -400,13 +412,16 @@ describe("administrator workflows", () => {
     fireEvent.change(screen.getByLabelText("Значение 1"), {target: {value: "first.corp"}});
     fireEvent.change(screen.getByLabelText("Поиск значений"), {target: {value: "new-host"}});
     expect(screen.queryByLabelText("Значение 2")).toBeNull();
-    fireEvent.change(screen.getByLabelText("Значение 21"), {target: {value: "edited-new-host.corp"}});
+    const filteredInput = screen.getByLabelText("Значение 21");
+    await userEvent.clear(filteredInput);
+    await userEvent.type(filteredInput, "edited.corp");
+    expect((filteredInput as HTMLInputElement).value).toBe("edited.corp");
     await userEvent.click(screen.getByRole("button", {name: "Сохранить черновик"}));
     await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init.method === "PUT")).toBe(true));
     const saved = JSON.parse(fetcher.mock.calls.find(([, init]) => init.method === "PUT")![1].body as string);
     expect(saved.entries).toHaveLength(21);
     expect(saved.entries[0].value).toBe("first.corp");
     expect(saved.entries[1].value).toBe("host-1.corp");
-    expect(saved.entries[20].value).toBe("edited-new-host.corp");
+    expect(saved.entries[20].value).toBe("edited.corp");
   });
 });

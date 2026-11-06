@@ -226,10 +226,6 @@ function PolicyEditor({
       <Resource resource={resource}>
         {version && (
           <>
-            <p className="muted">
-              Решение действует на весь запрос. Приоритет: блокировка →
-              маскирование → пропуск.
-            </p>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -271,7 +267,6 @@ function PolicyEditor({
               </div>
               <Field
                 label="Профиль детектора"
-                hint="Для новой публикации выберите профиль, установленный на сервере."
               >
                 <select
                   value={profile}
@@ -350,8 +345,7 @@ function PolicyEditor({
                 </div>
               ) : (
                 <div className="notice">
-                  Опубликованная версия неизменна. Создайте её копию для новых
-                  правил.
+                  Опубликованная версия доступна только для чтения.
                 </div>
               )}
               {editable && dirty && (
@@ -483,9 +477,7 @@ export function Dictionaries() {
   return (
     <>
       <div className="toolbar">
-        <span className="muted">
-          Опубликованные версии подключаются к политикам
-        </span>
+        <span />
         <button
           className="primary"
           disabled={task.busy}
@@ -649,10 +641,6 @@ function DictionaryEditor({
       <Resource resource={resource}>
         {dictionary && (
           <>
-            <div className="notice">
-              Значения словаря могут быть чувствительными. Они доступны только в
-              этом разделе и не выводятся в журнал запросов.
-            </div>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -739,8 +727,9 @@ function EntriesEditor({
 }) {
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
+  const [editingIndex, setEditingIndex] = useState<number>();
   const limit = 20;
-  const filteredEntries = entries.map((entry, index) => ({ entry, index })).filter(({entry}) => entry.value.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  const filteredEntries = entries.map((entry, index) => ({ entry, index })).filter(({entry, index}) => index === editingIndex || entry.value.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
   const pageEntries = filteredEntries.slice(page * limit, (page + 1) * limit);
   useEffect(() => {
     if (page * limit >= filteredEntries.length && page > 0)
@@ -770,7 +759,7 @@ function EntriesEditor({
         )}
       </div>
       <Field label="Поиск значений">
-        <input type="search" autoComplete="off" value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }} />
+        <input type="search" autoComplete="off" value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); setEditingIndex(undefined); }} />
       </Field>
       {filteredEntries.length ? (
         <div className="dictionary-entries">
@@ -781,6 +770,8 @@ function EntriesEditor({
                   aria-label={`Категория значения ${index + 1}`}
                   value={entry.category}
                   disabled={disabled}
+                  onFocus={() => setEditingIndex(index)}
+                  onBlur={() => setEditingIndex(undefined)}
                   onChange={(e) =>
                     onChange(
                       entries.map((item, i) =>
@@ -807,6 +798,8 @@ function EntriesEditor({
                   required
                   maxLength={2048}
                   disabled={disabled}
+                  onFocus={() => setEditingIndex(index)}
+                  onBlur={() => setEditingIndex(undefined)}
                   onChange={(e) =>
                     onChange(
                       entries.map((item, i) =>

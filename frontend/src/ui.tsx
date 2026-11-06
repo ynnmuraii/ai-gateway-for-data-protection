@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { errorMessage } from "./api";
+import { Icon } from "./Icons";
 import {
   actionLabels,
   categoryLabels,
@@ -275,7 +276,7 @@ export function Modal({
             aria-label="Закрыть окно"
             onClick={onClose}
           >
-            ×
+            <Icon name="close" size={18} />
           </button>
         </div>
         {children}

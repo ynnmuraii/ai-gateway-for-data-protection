@@ -150,10 +150,6 @@ export function Users({ currentUserId }: { currentUserId: string }) {
           onClose={() => setSelected("")}
         />
       )}
-      <div className="notice">
-        Внешние роли и имена не дают прав в шлюзе. Доступ к запросам
-        определяется явной связью интеграции и внешнего идентификатора.
-      </div>
       {creating && (
         <Modal title="Новый пользователь" onClose={() => setCreating(false)}>
           <NewUser
@@ -571,16 +567,10 @@ export function Integrations() {
   return (
     <>
       <div className="toolbar">
-        <span className="muted">
-          Ключ интеграции разрешает доступ доверенному серверу
-        </span>
+        <span />
         <button className="primary" onClick={() => setCreating(true)}>
           + Интеграция
         </button>
-      </div>
-      <div className="notice">
-        Проверка подписи внешнего пользователя настраивается при развёртывании.
-        Ключ интеграции не заменяет явное сопоставление пользователя.
       </div>
       <Panel
         title="Доверенные клиенты"
@@ -595,9 +585,6 @@ export function Integrations() {
             <div className="integration-grid">
               {resource.data.map((integration) => (
                 <article className="integration-card" key={integration.id}>
-                  <div className="integration-icon" aria-hidden="true">
-                    ⇄
-                  </div>
                   <div>
                     <h3>{integration.name}</h3>
                     <span

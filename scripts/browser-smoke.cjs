@@ -14,6 +14,7 @@ fs.mkdirSync(artifactDir,{recursive:true});
   const browser = await chromium.launch({channel:'chrome',headless:true});
   try {
   const page = await browser.newPage({viewport:{width:1440,height:1000}});
+  await page.emulateMedia({reducedMotion:'reduce'});
   const failures=[];
   const checks=[];
   page.on('pageerror',error=>failures.push(error.message));
@@ -23,30 +24,36 @@ fs.mkdirSync(artifactDir,{recursive:true});
   await page.getByRole('button',{name:'Войти',exact:true}).click();
   await page.locator('nav a[href="#preview"]').waitFor({timeout:15000});
   await page.getByText('Защита готова',{exact:true}).waitFor();
+  const cookie=(await page.context().cookies(new URL('api/auth/me',baseUrl).toString())).find(value=>value.name==='gw_admin_session');
+  assert.ok(cookie?.secure&&cookie.httpOnly&&cookie.sameSite==='Strict','administrator cookie lacks secure attributes');
   checks.push('Secure localhost session cookie and readiness indicator');
   await page.screenshot({path:path.join(artifactDir,'dashboard.png'),fullPage:true});
   await page.locator('nav a[href="#preview"]').click();
   await page.getByLabel('Текст сообщения 1').fill('Ошибка сервиса: alice@example.com подключился к 10.20.30.40');
-  await page.getByRole('button',{name:'Проверить текст →'}).click();
+  await page.getByRole('button',{name:'Проверить текст',exact:true}).click();
   await page.getByText('Чувствительные значения заменены.',{exact:true}).waitFor();
   const output=(await page.locator('pre').allTextContents()).join('\n');
   assert.match(output,/\[EMAIL_[A-Z2-7]{52}\]/);
   assert.match(output,/\[IP_ADDRESS_[A-Z2-7]{52}\]/);
+  await page.locator('.preview-counts').getByText('Электронная почта',{exact:true}).waitFor();
+  await page.locator('.preview-counts').getByText('IP-адреса',{exact:true}).waitFor();
   assert.ok(!output.includes('alice@example.com')&&!output.includes('10.20.30.40'));
   checks.push('Real detector masks email and private IP through authenticated preview');
   await page.screenshot({path:path.join(artifactDir,'preview.png'),fullPage:true});
-  for(const [category,text] of [['PHONE','Телефон: +7 912 345-67-89'],['INTERNAL_HOSTNAME','server=build-01.corp']]) {
+  for(const [category,label,text] of [['PHONE','Телефоны','Телефон: +7 912 345-67-89'],['INTERNAL_HOSTNAME','Внутренние хосты','server=build-01.corp']]) {
     await page.getByLabel('Текст сообщения 1').fill(text);
-    await page.getByRole('button',{name:'Проверить текст →'}).click();
+    await page.getByRole('button',{name:'Проверить текст',exact:true}).click();
     await page.getByText('Чувствительные значения заменены.',{exact:true}).waitFor();
     assert.match((await page.locator('pre').allTextContents()).join('\n'),new RegExp('\\['+category+'_[A-Z2-7]{52}\\]'));
+    await page.locator('.preview-counts').getByText(label,{exact:true}).waitFor();
     checks.push(category+' preview masking');
   }
-  for(const [category,text] of [['API_KEY','key=ghp_'+ 'A'.repeat(36)],['ACCESS_TOKEN','access_token=SyntheticAccessToken123456789']]) {
+  for(const [category,label,text] of [['API_KEY','API-ключи','key=sk-'+ 'A'.repeat(32)],['ACCESS_TOKEN','Токены доступа','access_token=SyntheticAccessToken123456789']]) {
     await page.getByLabel('Текст сообщения 1').fill(text);
-    await page.getByRole('button',{name:'Проверить текст →'}).click();
+    await page.getByRole('button',{name:'Проверить текст',exact:true}).click();
     await page.getByText('Передача остановлена. Провайдер не получит сообщения.',{exact:true}).waitFor();
     assert.equal(await page.locator('pre').count(),0);
+    await page.locator('.preview-counts').getByText(label,{exact:true}).waitFor();
     checks.push(category+' preview blocking');
   }
   const tokenHead=Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url');
@@ -54,8 +61,9 @@ fs.mkdirSync(artifactDir,{recursive:true});
   const tokenInput=tokenHead+'.'+tokenBody;
   const fakeJwt=tokenInput+'.'+crypto.createHmac('sha256','synthetic-test-key-not-authentication').update(tokenInput).digest('base64url');
   await page.getByLabel('Текст сообщения 1').fill('token='+fakeJwt);
-  await page.getByRole('button',{name:'Проверить текст →'}).click();
+  await page.getByRole('button',{name:'Проверить текст',exact:true}).click();
   await page.getByText('Передача остановлена. Провайдер не получит сообщения.',{exact:true}).waitFor();
+  await page.locator('.preview-counts').getByText('JWT',{exact:true}).waitFor();
   checks.push('JWT preview blocks without forwarding');
   for(const section of ['audit','policies','dictionaries','users','integrations','settings']){
     await page.locator(`nav a[href="#${section}"]`).click();
@@ -64,6 +72,10 @@ fs.mkdirSync(artifactDir,{recursive:true});
     await page.screenshot({path:path.join(artifactDir,`${section}.png`),fullPage:true});
     checks.push('Live '+section+' page');
   }
+  await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+  await page.locator('nav a[href="#preview"]').click();
+  await page.waitForFunction(()=>window.scrollY===0);
+  checks.push('Workspace navigation returns to the document top');
   await page.setViewportSize({width:390,height:844});
   await page.goto(baseUrl+'#preview');
   await page.getByLabel('Текст сообщения 1').waitFor();
@@ -71,7 +83,12 @@ fs.mkdirSync(artifactDir,{recursive:true});
   await page.screenshot({path:path.join(artifactDir,'mobile.png'),fullPage:true});
   checks.push('390px mobile layout without horizontal overflow');
   if(failures.length)throw new Error('Browser errors: '+failures.join('; '));
-  await page.getByRole('button',{name:'☰ Меню',exact:true}).click();
+  await page.getByRole('button',{name:'Меню',exact:true}).click();
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('href')==='#preview');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>document.activeElement?.classList.contains('menu-toggle')&&!document.querySelector('.sidebar.is-open'));
+  checks.push('Mobile menu focuses navigation; Escape restores the opener');
+  await page.getByRole('button',{name:'Меню',exact:true}).click();
   await page.locator('nav a[href="#integrations"]').click();
   await page.getByRole('button',{name:'+ Интеграция',exact:true}).click();
   const dialog=page.getByRole('dialog');

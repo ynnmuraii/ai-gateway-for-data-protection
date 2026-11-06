@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api, query } from "../api";
+import { Icon } from "../Icons";
 import {
   actionLabels,
   categories,
@@ -54,7 +55,7 @@ export function Dashboard() {
   return (
     <>
       <div className="toolbar">
-        <span className="muted">Показатели по безопасному журналу</span>
+        <span />
         <div className="actions">
           <select
             aria-label="Период статистики"
@@ -87,48 +88,30 @@ export function Dashboard() {
                     ? "Защита готова"
                     : "Шлюз не готов"}
                 </strong>
-                <small>
-                  {data.health.status === "ok"
-                    ? "Проверка перед каждым обращением к AI"
-                    : "Проверьте доступность зависимостей"}
-                </small>
               </div>
-              <div className="flow-stages">
-                <span>Входящий текст</span>
-                <b>→</b>
-                <span className="flow-active">
-                  Политика v{data.active.policy_version}
-                </span>
-                <b>→</b>
-                <span>Провайдер AI</span>
-              </div>
-              <a href="#policies">Управлять правилами ↗</a>
+              <a href="#policies">Политика v{data.active.policy_version}<Icon name="arrow" size={16} /></a>
             </section>
             <div className="metrics">
               <Metric
                 label="Всего запросов"
                 value={number(data.stats.total_requests)}
-                note={`За ${days === 1 ? "24 часа" : days + " дней"}`}
               />
               <Metric
                 label="Замаскировано"
                 value={number(data.stats.decisions.MASK ?? 0)}
-                note="Текст защищён перед передачей"
                 tone="green"
               />
               <Metric
                 label="Заблокировано"
                 value={number(data.stats.decisions.BLOCK ?? 0)}
-                note="Передача провайдеру остановлена"
               />
               <Metric
-                label="Задержка проверки и ответа"
+                label="Задержка p95"
                 value={
                   data.stats.latency.p95_ms === null
                     ? "—"
                     : number(data.stats.latency.p95_ms) + " мс"
                 }
-                note="95-й процентиль"
               />
             </div>
             <div className="grid-two">
@@ -157,17 +140,6 @@ export function Dashboard() {
                 )}
               </Panel>
             </div>
-            <Panel title="Проверить защиту">
-              <div className="callout-row">
-                <p>
-                  Введите пример текста и проверьте решения текущей политики.
-                  Проверка не вызывает AI-провайдера.
-                </p>
-                <a className="button primary" href="#preview">
-                  Проверить текст →
-                </a>
-              </div>
-            </Panel>
           </>
         )}
       </Resource>
@@ -177,19 +149,16 @@ export function Dashboard() {
 function Metric({
   label,
   value,
-  note,
   tone = "",
 }: {
   label: string;
   value: string;
-  note: string;
   tone?: string;
 }) {
   return (
     <section className={`metric ${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
-      <small>{note}</small>
     </section>
   );
 }
@@ -225,10 +194,6 @@ export function Audit() {
   };
   return (
     <>
-      <div className="notice">
-        Журнал содержит решения, категории и технические метаданные. Исходный
-        текст и ответы модели не сохраняются.
-      </div>
       <Panel>
         <form method="get" className="filter-grid" onSubmit={apply}>
           <Field label="С даты">
@@ -500,10 +465,7 @@ export function PreviewPage() {
   };
   return (
     <>
-      <div className="notice">
-        Текст используется только для этой проверки. Провайдер не вызывается;
-        исходный текст не попадает в журнал.
-      </div>
+      <div className="privacy-caption"><Icon name="shield" size={16} />Локальная проверка · без отправки в LLM</div>
       <form method="post" onSubmit={submit}>
         <div className="preview-layout">
           <Panel
@@ -511,6 +473,7 @@ export function PreviewPage() {
             actions={
               <button
                 className="text-button"
+                aria-label="Очистить"
                 type="button"
                 disabled={task.busy}
                 onClick={() => {
@@ -519,7 +482,7 @@ export function PreviewPage() {
                   task.clear();
                 }}
               >
-                Очистить
+                <Icon name="trash" size={18} />
               </button>
             }
           >
@@ -601,7 +564,7 @@ export function PreviewPage() {
                 + Сообщение
               </button>
               <button className="primary" disabled={task.busy}>
-                {task.busy ? "Проверка…" : "Проверить текст →"}
+                {task.busy ? "Проверка…" : <>Проверить текст<Icon name="arrow" size={16} /></>}
               </button>
             </div>
             <ErrorBox error={task.error} />
@@ -659,14 +622,8 @@ export function PreviewPage() {
               </>
             ) : (
               <div className="preview-empty">
-                <div className="preview-symbol" aria-hidden="true">
-                  ⌕
-                </div>
-                <h3>Проверьте текст до отправки</h3>
-                <p>
-                  Здесь появятся решение, найденные категории и текст после
-                  обработки.
-                </p>
+                <Icon name="shield" size={32} />
+                <p>Результат появится здесь</p>
               </div>
             )}
           </Panel>

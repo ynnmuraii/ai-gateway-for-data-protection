@@ -6,57 +6,58 @@ import { Dashboard, Audit, PreviewPage } from "./pages/Activity";
 import { Policies, Dictionaries } from "./pages/Protection";
 import { Users, Integrations } from "./pages/Access";
 import { Settings } from "./pages/Settings";
+import { Icon, type IconName } from "./Icons";
 
 const navigation = [
   {
     id: "dashboard",
     label: "Обзор",
-    icon: "◫",
+    icon: "dashboard",
     group: "Рабочее пространство",
     description: "Защита данных перед отправкой в AI",
   },
   {
     id: "audit",
     label: "Журнал запросов",
-    icon: "≡",
+    icon: "audit",
     description: "Решения и безопасные метаданные запросов",
   },
   {
     id: "preview",
     label: "Проверка текста",
-    icon: "⌕",
+    icon: "preview",
     description: "Посмотрите, что увидит внешний провайдер",
   },
   {
     id: "policies",
     label: "Политики",
-    icon: "◇",
+    icon: "policies",
     group: "Защита",
     description: "Правила обработки чувствительных данных",
   },
   {
     id: "dictionaries",
     label: "Словари",
-    icon: "▤",
+    icon: "dictionaries",
     description: "Корпоративные значения и их версии",
   },
   {
     id: "users",
     label: "Пользователи",
-    icon: "♙",
+    icon: "users",
     group: "Управление",
     description: "Локальные учётные записи и внешние идентификаторы",
   },
   {
     id: "integrations",
     label: "Интеграции",
-    icon: "⇄",
+    icon: "integrations",
     description: "Доверенные клиенты и ключи доступа",
   },
   {
     id: "settings",
     label: "Настройки",
-    icon: "⚙",
+    icon: "settings",
     description: "Провайдер, модели и хранение журнала",
   },
 ] as const;
@@ -99,6 +100,7 @@ export default function App() {
     const change = () => {
       setRoute(currentRoute());
       setMenu(false);
+      window.scrollTo(0, 0);
     };
     const expired = () => {
       updateSession(null);
@@ -112,6 +114,18 @@ export default function App() {
       window.removeEventListener("gateway-session-expired", expired);
     };
   }, []);
+  useEffect(() => {
+    if (!menu) return;
+    document.querySelector<HTMLElement>('#gateway-sidebar a[aria-current="page"]')?.focus();
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenu(false);
+        document.querySelector<HTMLElement>(".menu-toggle")?.focus();
+      }
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [menu]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 6000);
@@ -167,29 +181,21 @@ export default function App() {
         Перейти к содержимому
       </a>
       <div className="app-shell">
-        <aside className={`sidebar ${menu ? "is-open" : ""}`}>
+        {menu && <button className="sidebar-scrim" aria-label="Закрыть меню" onClick={() => setMenu(false)} />}
+        <aside id="gateway-sidebar" className={`sidebar ${menu ? "is-open" : ""}`}>
           <a className="brand" href="#dashboard">
-            <span className="brand-mark">К</span>
-            <span>
-              Контур<small>AI Gateway</small>
-            </span>
+            <Icon name="shield" size={23} />
+            <span>Контур</span>
           </a>
-          <div className="installation">
-            <span className="status-dot" />
-            Локальная установка
-          </div>
           <nav aria-label="Основная навигация">
             {navigation.map((item) => (
-              <div key={item.id}>
-                {"group" in item && (
-                  <div className="nav-group">{item.group}</div>
-                )}
+              <div key={item.id} className={"group" in item ? "nav-section" : undefined}>
                 <a
                   href={"#" + item.id}
                   className={route === item.id ? "active" : ""}
                   aria-current={route === item.id ? "page" : undefined}
                 >
-                  <span aria-hidden="true">{item.icon}</span>
+                  <Icon name={item.icon as IconName} />
                   {item.label}
                 </a>
               </div>
@@ -201,7 +207,6 @@ export default function App() {
             </div>
             <div className="account">
               <strong>{session.user.display_name}</strong>
-              <small>Администратор</small>
             </div>
             <button
               className="icon-button"
@@ -216,7 +221,7 @@ export default function App() {
                 })
               }
             >
-              ↪
+              <Icon name="logout" size={18} />
             </button>
           </div>
           <ErrorBox error={task.error} />
@@ -225,14 +230,15 @@ export default function App() {
           <header className="page-header">
             <div>
               <h1>{active.label}</h1>
-              <p>{active.description}</p>
             </div>
             <button
-              className="secondary menu-toggle"
+              className="icon-button menu-toggle"
+              aria-label="Меню"
+              aria-controls="gateway-sidebar"
               aria-expanded={menu}
               onClick={() => setMenu((v) => !v)}
             >
-              ☰ Меню
+              <Icon name={menu ? "close" : "menu"} />
             </button>
           </header>
           <div className="page-body" key={route}>
@@ -254,7 +260,6 @@ export default function App() {
               <Settings />
             )}
           </div>
-          <footer>Контур · Данные проверяются до передачи провайдеру</footer>
         </main>
       </div>
       {toast && (
@@ -265,7 +270,7 @@ export default function App() {
             aria-label="Закрыть уведомление"
             onClick={() => setToast("")}
           >
-            ×
+            <Icon name="close" size={16} />
           </button>
         </div>
       )}
@@ -289,34 +294,9 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
   };
   return (
     <div className="auth-shell">
-      <section className="auth-story">
-        <div className="brand">
-          <span className="brand-mark">К</span>
-          <span>
-            Контур<small>AI Gateway</small>
-          </span>
-        </div>
-        <h1>
-          Чувствительные данные
-          <br />
-          остаются внутри.
-        </h1>
-        <p>
-          Управляйте правилами защиты, проверяйте текст и отслеживайте решения
-          шлюза.
-        </p>
-        <div className="auth-flow">
-          <span>Запрос</span>
-          <b>→</b>
-          <span>Проверка</span>
-          <b>→</b>
-          <span>AI</span>
-        </div>
-        <small>Одна организация. Один контур защиты.</small>
-      </section>
       <section className="login-panel">
-        <h2>Вход в систему</h2>
-        <p>Используйте локальную учётную запись шлюза.</p>
+        <div className="login-logo"><Icon name="shield" size={36} /></div>
+        <h1>Вход в Контур</h1>
         <form method="post" onSubmit={submit}>
           <Field label="Имя пользователя">
             <input
@@ -348,9 +328,6 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
             {task.busy ? "Вход…" : "Войти"}
           </button>
         </form>
-        <small className="muted">
-          Доступ выдаёт администратор вашей установки.
-        </small>
       </section>
     </div>
   );
