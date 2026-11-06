@@ -365,6 +365,27 @@ describe("administrator workflows", () => {
     const call = fetcher.mock.calls.find(([path, init]) => path.endsWith("/policy-one") && init.method === "PUT")!;
     expect(JSON.parse(call[1].body as string).detector_profile_version).toBe("baseline:2");
   });
+  it("clones a published S1 policy onto the deployed detector without changing the source", async () => {
+    location.hash = "#policies";
+    const legacy = {...policy, id: "legacy-policy", status: "published" as const, detector_profile_version: "baseline:1"};
+    const cloned = {...legacy, id: "upgraded-draft", status: "draft" as const, version: 3, detector_profile_version: "baseline:2"};
+    const fetcher = mockApi((path, init) => {
+      if (path === "/policy-versions") return {body: init.method === "POST" ? cloned : [legacy]};
+      if (path === "/dictionary-versions") return {body: []};
+      if (path === "/active-policy") return {body: active, etag: '"7"'};
+      if (path.startsWith("/policy-activations")) return {body: {items: []}};
+      if (path === "/policy-versions/legacy-policy") return {body: legacy};
+      if (path === "/policy-versions/upgraded-draft") return {body: cloned};
+      return {status: 404};
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", {name: /Версия 1/}));
+    await userEvent.click(await screen.findByRole("button", {name: "Создать черновик из этой версии"}));
+    await screen.findByRole("heading", {name: "Правила · версия 3"});
+    const call = fetcher.mock.calls.find(([path, init]) => path.endsWith("/policy-versions") && init.method === "POST")!;
+    expect(JSON.parse(call[1].body as string)).toEqual({clone_policy_version_id: "legacy-policy", detector_profile_version: "baseline:2"});
+    expect(fetcher.mock.calls.some(([path, init]) => path.endsWith("/legacy-policy") && init.method !== "GET")).toBe(false);
+  });
   it("rejects equal audit time bounds without submitting a new request", async () => {
     location.hash = "#audit";
     const fetcher = mockApi(() => ({body: {items: []}}));

@@ -44,10 +44,17 @@ export function Policies() {
   );
   const create = (clone?: string) =>
     task.run(async () => {
+      const sourceProfile = versions.data?.find((version) => version.id === clone)?.detector_profile_version;
+      const deployed = profiles.data?.find((candidate) => candidate.deployed && `${candidate.profile_name}:${candidate.version}` === sourceProfile)
+        ?? profiles.data?.find((candidate) => candidate.deployed);
+      if (clone && !deployed) throw new ApiError(409, "detector_profile_mismatch");
       const value = await api<Policy>(
         "/policy-versions",
         "POST",
-        clone ? { clone_policy_version_id: clone } : {},
+        clone ? {
+          clone_policy_version_id: clone,
+          detector_profile_version: `${deployed!.profile_name}:${deployed!.version}`,
+        } : {},
       );
       versions.reload();
       setSelected(value.id);
