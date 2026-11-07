@@ -231,7 +231,7 @@ def verify(client, user, engine, model_id="demo-model"):
                 if "error" in data:
                     raise RuntimeError("Streaming verification returned an error.")
                 for choice in data.get("choices", []):
-                    pieces.append(choice.get("delta", {}).get("content", ""))
+                    pieces.append(choice.get("delta", {}).get("content") or "")
                     if choice.get("finish_reason") == "stop":
                         complete = True
         streamed = "".join(pieces)
