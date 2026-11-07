@@ -1,0 +1,106 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const {chromium} = require('../.runtime/browser-tools/node_modules/playwright');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const root = path.resolve(__dirname, '..');
+const composeAccess = path.join(root, '.runtime/compose-access.json');
+const accessPath = process.env.GATEWAY_ACCESS_FILE || (fs.existsSync(composeAccess) ? composeAccess : path.join(root,'.runtime/access.json'));
+const access = JSON.parse(fs.readFileSync(accessPath,'utf8'));
+const baseUrl = process.env.GATEWAY_BROWSER_URL || 'http://localhost:8080/admin/';
+const artifactDir = process.env.GATEWAY_BROWSER_ARTIFACTS || path.join(root,'.runtime/sprint-2-browser');
+fs.mkdirSync(artifactDir,{recursive:true});
+(async()=>{
+  const browser = await chromium.launch({channel:'chrome',headless:true});
+  try {
+  const page = await browser.newPage({viewport:{width:1440,height:1000}});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  const failures=[];
+  const checks=[];
+  page.on('pageerror',error=>failures.push(error.message));
+  await page.goto(baseUrl);
+  await page.locator('input[autocomplete="username"]').fill(access.admin_username);
+  await page.locator('input[type="password"]').fill(access.admin_password);
+  await page.getByRole('button',{name:'Войти',exact:true}).click();
+  await page.locator('nav a[href="#preview"]').waitFor({timeout:15000});
+  await page.getByText('Защита готова',{exact:true}).waitFor();
+  const cookie=(await page.context().cookies(new URL('api/auth/me',baseUrl).toString())).find(value=>value.name==='gw_admin_session');
+  assert.ok(cookie?.secure&&cookie.httpOnly&&cookie.sameSite==='Strict','administrator cookie lacks secure attributes');
+  checks.push('Secure localhost session cookie and readiness indicator');
+  await page.screenshot({path:path.join(artifactDir,'dashboard.png'),fullPage:true});
+  await page.locator('nav a[href="#preview"]').click();
+  await page.getByLabel('Текст сообщения 1').fill('Ошибка сервиса: alice@example.com подключился к 10.20.30.40');
+  await page.getByRole('button',{name:'Проверить текст',exact:true}).click();
+  await page.getByText('Чувствительные значения заменены.',{exact:true}).waitFor();
+  const output=(await page.locator('pre').allTextContents()).join('\n');
+  assert.match(output,/\[EMAIL_[A-Z2-7]{52}\]/);
+  assert.match(output,/\[IP_ADDRESS_[A-Z2-7]{52}\]/);
+  await page.locator('.preview-counts').getByText('Электронная почта',{exact:true}).waitFor();
+  await page.locator('.preview-counts').getByText('IP-адреса',{exact:true}).waitFor();
+  assert.ok(!output.includes('alice@example.com')&&!output.includes('10.20.30.40'));
+  checks.push('Real detector masks email and private IP through authenticated preview');
+  await page.screenshot({path:path.join(artifactDir,'preview.png'),fullPage:true});
+  for(const [category,label,text] of [['PHONE','Телефоны','Телефон: +7 912 345-67-89'],['INTERNAL_HOSTNAME','Внутренние хосты','server=build-01.corp']]) {
+    await page.getByLabel('Текст сообщения 1').fill(text);
+    await page.getByRole('button',{name:'Проверить текст',exact:true}).click();
+    await page.getByText('Чувствительные значения заменены.',{exact:true}).waitFor();
+    assert.match((await page.locator('pre').allTextContents()).join('\n'),new RegExp('\\['+category+'_[A-Z2-7]{52}\\]'));
+    await page.locator('.preview-counts').getByText(label,{exact:true}).waitFor();
+    checks.push(category+' preview masking');
+  }
+  for(const [category,label,text] of [['API_KEY','API-ключи','key=sk-'+ 'A'.repeat(32)],['ACCESS_TOKEN','Токены доступа','access_token=SyntheticAccessToken123456789']]) {
+    await page.getByLabel('Текст сообщения 1').fill(text);
+    await page.getByRole('button',{name:'Проверить текст',exact:true}).click();
+    await page.getByText('Передача остановлена. Провайдер не получит сообщения.',{exact:true}).waitFor();
+    assert.equal(await page.locator('pre').count(),0);
+    await page.locator('.preview-counts').getByText(label,{exact:true}).waitFor();
+    checks.push(category+' preview blocking');
+  }
+  const tokenHead=Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url');
+  const tokenBody=Buffer.from(JSON.stringify({sub:'synthetic-browser-test'})).toString('base64url');
+  const tokenInput=tokenHead+'.'+tokenBody;
+  const fakeJwt=tokenInput+'.'+crypto.createHmac('sha256','synthetic-test-key-not-authentication').update(tokenInput).digest('base64url');
+  await page.getByLabel('Текст сообщения 1').fill('token='+fakeJwt);
+  await page.getByRole('button',{name:'Проверить текст',exact:true}).click();
+  await page.getByText('Передача остановлена. Провайдер не получит сообщения.',{exact:true}).waitFor();
+  await page.locator('.preview-counts').getByText('JWT',{exact:true}).waitFor();
+  checks.push('JWT preview blocks without forwarding');
+  for(const section of ['audit','policies','dictionaries','users','integrations','settings']){
+    await page.locator(`nav a[href="#${section}"]`).click();
+    await page.waitForFunction(()=>!document.querySelector('.loading'));
+    assert.equal(await page.locator('[role="alert"]').count(),0,section+' shows an API error');
+    await page.screenshot({path:path.join(artifactDir,`${section}.png`),fullPage:true});
+    checks.push('Live '+section+' page');
+  }
+  await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+  await page.locator('nav a[href="#preview"]').click();
+  await page.waitForFunction(()=>window.scrollY===0);
+  checks.push('Workspace navigation returns to the document top');
+  await page.setViewportSize({width:390,height:844});
+  await page.goto(baseUrl+'#preview');
+  await page.getByLabel('Текст сообщения 1').waitFor();
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'mobile horizontal overflow');
+  await page.screenshot({path:path.join(artifactDir,'mobile.png'),fullPage:true});
+  checks.push('390px mobile layout without horizontal overflow');
+  if(failures.length)throw new Error('Browser errors: '+failures.join('; '));
+  await page.getByRole('button',{name:'Меню',exact:true}).click();
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('href')==='#preview');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>document.activeElement?.classList.contains('menu-toggle')&&!document.querySelector('.sidebar.is-open'));
+  checks.push('Mobile menu focuses navigation; Escape restores the opener');
+  await page.getByRole('button',{name:'Меню',exact:true}).click();
+  await page.locator('nav a[href="#integrations"]').click();
+  await page.getByRole('button',{name:'+ Интеграция',exact:true}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.waitFor();
+  assert.ok(await dialog.evaluate(element=>element.matches(':modal')),'native modal does not make the background inert');
+  const nameInput=page.getByLabel('Название интеграции');
+  await nameInput.focus();
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({state:'detached'});
+  assert.ok(await page.getByRole('button',{name:'+ Интеграция',exact:true}).evaluate(element=>element===document.activeElement),'dialog did not restore focus');
+  checks.push('Native modal, Escape dismissal and focus restoration');
+  fs.writeFileSync(path.join(artifactDir,'verification.json'),JSON.stringify({checkedAt:new Date().toISOString(),checks,consoleErrors:failures},null,2));
+  console.log(JSON.stringify({checks:checks.length,consoleErrors:failures.length}));
+  } finally { await browser.close(); }
+})().catch(error=>{console.error(error);process.exit(1)});

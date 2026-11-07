@@ -2,15 +2,69 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, setSession } from "./api";
 import type { Session } from "./types";
 import { ErrorBox, Field, NotifyContext, Spinner, useTask } from "./ui";
-import { PreviewPage } from "./pages/Activity";
+import { Dashboard, Audit, PreviewPage } from "./pages/Activity";
+import { Policies, Dictionaries } from "./pages/Protection";
+import { Users, Integrations } from "./pages/Access";
+import { Settings } from "./pages/Settings";
+import { Icon, type IconName } from "./Icons";
 
 const navigation = [
-  {"id": "preview", "label": "Проверка текста", "icon": "◇", "group": "Рабочее пространство", "description": "Предпросмотр без вызова провайдера"},
+  {
+    id: "dashboard",
+    label: "Обзор",
+    icon: "dashboard",
+    group: "Рабочее пространство",
+    description: "Защита данных перед отправкой в AI",
+  },
+  {
+    id: "audit",
+    label: "Журнал запросов",
+    icon: "audit",
+    description: "Решения и безопасные метаданные запросов",
+  },
+  {
+    id: "preview",
+    label: "Проверка текста",
+    icon: "preview",
+    description: "Посмотрите, что увидит внешний провайдер",
+  },
+  {
+    id: "policies",
+    label: "Политики",
+    icon: "policies",
+    group: "Защита",
+    description: "Правила обработки чувствительных данных",
+  },
+  {
+    id: "dictionaries",
+    label: "Словари",
+    icon: "dictionaries",
+    description: "Корпоративные значения и их версии",
+  },
+  {
+    id: "users",
+    label: "Пользователи",
+    icon: "users",
+    group: "Управление",
+    description: "Локальные учётные записи и внешние идентификаторы",
+  },
+  {
+    id: "integrations",
+    label: "Интеграции",
+    icon: "integrations",
+    description: "Доверенные клиенты и ключи доступа",
+  },
+  {
+    id: "settings",
+    label: "Настройки",
+    icon: "settings",
+    description: "Провайдер, модели и хранение журнала",
+  },
 ] as const;
 type Route = (typeof navigation)[number]["id"];
 function currentRoute(): Route {
   const route = location.hash.slice(1);
-  return navigation.find((n) => n.id === route)?.id ?? "preview";
+  return navigation.find((n) => n.id === route)?.id ?? "dashboard";
 }
 export default function App() {
   const [session, updateSession] = useState<Session | null>(null);
@@ -46,6 +100,7 @@ export default function App() {
     const change = () => {
       setRoute(currentRoute());
       setMenu(false);
+      window.scrollTo(0, 0);
     };
     const expired = () => {
       updateSession(null);
@@ -60,11 +115,26 @@ export default function App() {
     };
   }, []);
   useEffect(() => {
+    if (!menu) return;
+    document.querySelector<HTMLElement>('#gateway-sidebar a[aria-current="page"]')?.focus();
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenu(false);
+        document.querySelector<HTMLElement>(".menu-toggle")?.focus();
+      }
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [menu]);
+  useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 6000);
     return () => clearTimeout(timer);
   }, [toast]);
   const active = navigation.find((n) => n.id === route)!;
+  useEffect(() => {
+    document.title = `${session ? active.label : "Вход"} · Контур AI Gateway`;
+  }, [active.label, !!session]);
   const login = (value: Session) => {
     setSession(value);
     updateSession(value);
@@ -111,29 +181,21 @@ export default function App() {
         Перейти к содержимому
       </a>
       <div className="app-shell">
-        <aside className={`sidebar ${menu ? "is-open" : ""}`}>
-          <a className="brand" href="#preview">
-            <span className="brand-mark">К</span>
-            <span>
-              Контур<small>AI Gateway</small>
-            </span>
+        {menu && <button className="sidebar-scrim" aria-label="Закрыть меню" onClick={() => setMenu(false)} />}
+        <aside id="gateway-sidebar" className={`sidebar ${menu ? "is-open" : ""}`}>
+          <a className="brand" href="#dashboard">
+            <Icon name="shield" size={23} />
+            <span>Контур</span>
           </a>
-          <div className="installation">
-            <span className="status-dot" />
-            Локальная установка
-          </div>
           <nav aria-label="Основная навигация">
             {navigation.map((item) => (
-              <div key={item.id}>
-                {"group" in item && (
-                  <div className="nav-group">{item.group}</div>
-                )}
+              <div key={item.id} className={"group" in item ? "nav-section" : undefined}>
                 <a
                   href={"#" + item.id}
                   className={route === item.id ? "active" : ""}
                   aria-current={route === item.id ? "page" : undefined}
                 >
-                  <span aria-hidden="true">{item.icon}</span>
+                  <Icon name={item.icon as IconName} />
                   {item.label}
                 </a>
               </div>
@@ -145,7 +207,6 @@ export default function App() {
             </div>
             <div className="account">
               <strong>{session.user.display_name}</strong>
-              <small>Администратор</small>
             </div>
             <button
               className="icon-button"
@@ -160,7 +221,7 @@ export default function App() {
                 })
               }
             >
-              ↪
+              <Icon name="logout" size={18} />
             </button>
           </div>
           <ErrorBox error={task.error} />
@@ -168,22 +229,37 @@ export default function App() {
         <main id="content" className="main" tabIndex={-1}>
           <header className="page-header">
             <div>
-              <div className="eyebrow">Управление шлюзом</div>
               <h1>{active.label}</h1>
-              <p>{active.description}</p>
             </div>
             <button
-              className="secondary menu-toggle"
+              className="icon-button menu-toggle"
+              aria-label="Меню"
+              aria-controls="gateway-sidebar"
               aria-expanded={menu}
               onClick={() => setMenu((v) => !v)}
             >
-              ☰ Меню
+              <Icon name={menu ? "close" : "menu"} />
             </button>
           </header>
           <div className="page-body" key={route}>
-            {route === "preview" && <PreviewPage />}
+            {route === "dashboard" ? (
+              <Dashboard />
+            ) : route === "audit" ? (
+              <Audit />
+            ) : route === "preview" ? (
+              <PreviewPage />
+            ) : route === "policies" ? (
+              <Policies />
+            ) : route === "dictionaries" ? (
+              <Dictionaries />
+            ) : route === "users" ? (
+              <Users currentUserId={session.user.id} />
+            ) : route === "integrations" ? (
+              <Integrations />
+            ) : (
+              <Settings />
+            )}
           </div>
-          <footer>Контур · Данные проверяются до передачи провайдеру</footer>
         </main>
       </div>
       {toast && (
@@ -194,7 +270,7 @@ export default function App() {
             aria-label="Закрыть уведомление"
             onClick={() => setToast("")}
           >
-            ×
+            <Icon name="close" size={16} />
           </button>
         </div>
       )}
@@ -218,39 +294,16 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
   };
   return (
     <div className="auth-shell">
-      <section className="auth-story">
-        <div className="brand">
-          <span className="brand-mark">К</span>
-          <span>
-            Контур<small>AI Gateway</small>
-          </span>
-        </div>
-        <h1>
-          Чувствительные данные
-          <br />
-          остаются внутри.
-        </h1>
-        <p>
-          Управляйте правилами защиты, проверяйте текст и отслеживайте решения
-          шлюза.
-        </p>
-        <div className="auth-flow">
-          <span>Запрос</span>
-          <b>→</b>
-          <span>Проверка</span>
-          <b>→</b>
-          <span>AI</span>
-        </div>
-        <small>Одна организация. Один контур защиты.</small>
-      </section>
       <section className="login-panel">
-        <div className="eyebrow">Панель администратора</div>
-        <h2>Вход в систему</h2>
-        <p>Используйте локальную учётную запись шлюза.</p>
-        <form onSubmit={submit}>
+        <div className="login-logo"><Icon name="shield" size={36} /></div>
+        <h1>Вход в Контур</h1>
+        <form method="post" onSubmit={submit}>
           <Field label="Имя пользователя">
             <input
               autoComplete="username"
+              name="username"
+              autoCapitalize="none"
+              spellCheck={false}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
@@ -262,6 +315,7 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
             <input
               type="password"
               autoComplete="current-password"
+              name="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -274,9 +328,6 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
             {task.busy ? "Вход…" : "Войти"}
           </button>
         </form>
-        <small className="muted">
-          Доступ выдаёт администратор вашей установки.
-        </small>
       </section>
     </div>
   );
