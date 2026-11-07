@@ -31,10 +31,10 @@ def session(client, email, password):
     return response.json() if response.is_success else None
 
 
-def internal(url):
+def internal(url, *, verify_live=False):
     settings = Settings()
-    if not settings.demo_mode:
-        raise RuntimeError("The installation acceptance helper requires simulator demo mode.")
+    if not settings.demo_mode and not verify_live:
+        raise RuntimeError("Real-provider acceptance requires --verify-live (three small synthetic requests).")
     # Only this installation job can access the blocked first-user signup route.
     with httpx.Client(base_url=url, timeout=120, trust_env=False) as client:
         admin = session(client, os.environ["WEBUI_ADMIN_EMAIL"], os.environ["WEBUI_ADMIN_PASSWORD"])
@@ -72,11 +72,11 @@ def internal(url):
         )
         try:
             with engine.begin() as connection:
-                endpoint = connection.execute(text("SELECT base_url FROM provider_config")).scalar_one()
-                if endpoint.rstrip("/") != "https://demo.invalid/v1":
-                    raise RuntimeError(
-                        "The acceptance helper requires the configured local simulator endpoint."
-                    )
+                provider = connection.execute(text("SELECT base_url,allowed_models FROM provider_config")).mappings().one()
+                is_demo = provider["base_url"].rstrip("/") == "https://demo.invalid/v1"
+                if not is_demo and not verify_live:
+                    raise RuntimeError("Real-provider acceptance requires --verify-live.")
+                model_id = provider["allowed_models"][0]
                 key_hash = hashlib.sha256(os.environ["GATEWAY_BOOTSTRAP_INTEGRATION_KEY"].encode()).digest()
                 integration = connection.execute(
                     text("SELECT id FROM client_integrations WHERE bearer_key_hash=:hash AND enabled"),
@@ -122,8 +122,8 @@ def internal(url):
                     ),
                     {"integration": integration},
                 )
-            authorize_model(client, admin, user)
-            verify(client, user, engine)
+            authorize_model(client, admin, user, model_id, is_demo=is_demo)
+            verify(client, user, engine, model_id)
         finally:
             engine.dispose()
     print(
@@ -131,17 +131,17 @@ def internal(url):
     )
 
 
-def authorize_model(client, admin, user):
+def authorize_model(client, admin, user, model_id="demo-model", *, is_demo=True):
     headers = {"Authorization": "Bearer " + admin["token"]}
     grant = {"principal_type": "user", "principal_id": user["id"], "permission": "read"}
-    response = client.get("/api/v1/models/model", params={"id": "demo-model"}, headers=headers)
+    response = client.get("/api/v1/models/model", params={"id": model_id}, headers=headers)
     if response.status_code == 404 or (response.is_success and response.json() is None):
         response = client.post(
             "/api/v1/models/create",
             headers=headers,
             json={
-                "id": "demo-model",
-                "name": "Gateway simulator (no LLM)",
+                "id": model_id,
+                "name": "Gateway simulator (no LLM)" if is_demo else "Gateway: " + model_id,
                 "params": {},
                 "meta": {"capabilities": TEXT_CAPABILITIES},
                 "access_grants": [grant],
@@ -166,7 +166,7 @@ def authorize_model(client, admin, user):
             meta = {**meta, "capabilities": {**capabilities, **TEXT_CAPABILITIES}}
             response = client.post(
                 "/api/v1/models/model/update",
-                params={"id": "demo-model"},
+                params={"id": model_id},
                 headers=headers,
                 json={
                     "id": model["id"],
@@ -181,11 +181,11 @@ def authorize_model(client, admin, user):
             response.raise_for_status()
 
 
-def verify(client, user, engine):
+def verify(client, user, engine, model_id="demo-model"):
     headers = {"Authorization": "Bearer " + user["token"]}
     response = client.get("/api/models", headers=headers)
     response.raise_for_status()
-    if "demo-model" not in {item["id"] for item in response.json()["data"]}:
+    if model_id not in {item["id"] for item in response.json()["data"]}:
         raise RuntimeError("Expected demo model was not listed.")
     response = client.post(
         "/api/v1/chats/new",
@@ -193,7 +193,7 @@ def verify(client, user, engine):
         json={
             "chat": {
                 "title": "Gateway verification",
-                "models": ["demo-model"],
+                "models": [model_id],
                 "messages": [],
                 "history": {"messages": {}, "currentId": None},
             }
@@ -201,18 +201,19 @@ def verify(client, user, engine):
     )
     response.raise_for_status()
     chat_id = response.json()["id"]
-    sample = "Please contact integration@example.com."
+    sample = "Repeat only the contact marker from this text: integration@example.com. Do not invent an address."
     payload = {
-        "model": "demo-model",
+        "model": model_id,
         "messages": [{"role": "user", "content": sample}],
         "chat_id": chat_id,
         "stream": False,
+        "max_tokens": 128,
     }
     try:
         response = client.post("/api/chat/completions", headers=headers, json=payload)
         response.raise_for_status()
         output = response.json()["choices"][0]["message"]["content"]
-        if "integration@example.com" in output or "EMAIL" not in output:
+        if "integration@example.com" in output:
             raise RuntimeError("Gateway did not mask the verification sample.")
         payload["stream"] = True
         pieces = []
@@ -230,11 +231,11 @@ def verify(client, user, engine):
                 if "error" in data:
                     raise RuntimeError("Streaming verification returned an error.")
                 for choice in data.get("choices", []):
-                    pieces.append(choice.get("delta", {}).get("content", ""))
+                    pieces.append(choice.get("delta", {}).get("content") or "")
                     if choice.get("finish_reason") == "stop":
                         complete = True
         streamed = "".join(pieces)
-        if not complete or "integration@example.com" in streamed or "EMAIL" not in streamed:
+        if not complete or "integration@example.com" in streamed:
             raise RuntimeError("Masked streaming completion was not verified.")
         with engine.connect() as connection:
             states = connection.execute(
@@ -264,12 +265,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--internal", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--url", default="http://openwebui:8080")
+    parser.add_argument("--verify-live", action="store_true", help="Allow three short synthetic requests to the configured paid provider.")
     args = parser.parse_args()
     if args.internal:
-        internal(args.url)
+        internal(args.url, verify_live=args.verify_live)
     else:
-        result = subprocess.run(
-            [
+        command = [
                 "docker",
                 "compose",
                 "--env-file",
@@ -279,7 +280,11 @@ def main():
                 "run",
                 "--rm",
                 "connect-openwebui",
-            ],
+            ]
+        if args.verify_live:
+            command += ["python", "scripts/connect-openwebui.py", "--internal", "--verify-live"]
+        result = subprocess.run(
+            command,
             cwd=ROOT,
             check=False,
         )
