@@ -4,7 +4,7 @@ import time
 import jwt
 import pytest
 from gateway.identity import verify_claims
-from gateway.protocol import GatewayError, parse_chat
+from gateway.protocol import GatewayError, load_json, parse_chat
 from gateway.provider import validate_provider_settings
 from gateway.settings import Settings
 
@@ -31,6 +31,20 @@ def test_json_duplicates_and_nonfinite_rejected():
     for body in [b'{"model":"a","model":"b","messages":[]}', b'{"temperature":NaN}', b"null"]:
         with pytest.raises(GatewayError):
             parse_chat(body)
+
+
+@pytest.mark.parametrize(
+    "body", [b'{"value":1e400}', b'{"nested":{"value":-1e400}}', b"[0,1e999]", b'{"x":Infinity}']
+)
+def test_json_loader_rejects_nested_overflow_before_schema_or_response_encoding(body):
+    with pytest.raises(GatewayError) as failure:
+        load_json(body)
+    assert failure.value.status_code == 400 and failure.value.code == "invalid_request"
+    assert body.decode() not in str(failure.value)
+
+
+def test_json_loader_preserves_finite_exponent_values():
+    assert load_json(b'{"value":1e3,"nested":[-1e-3]}') == {"value": 1000.0, "nested": [-0.001]}
 
 
 def test_jwt_requires_exact_claims_and_lifetime():
