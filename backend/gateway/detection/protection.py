@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import re
 import struct
-from itertools import pairwise
 from uuid import UUID
 
 from .types import CATEGORIES, DetectorError, Finding, ProtectionResult, validate_messages
@@ -73,13 +72,21 @@ def protect(
         return ProtectionResult("BLOCK", [], counts)
     masks = sorted(
         (f for f in unique.values() if actions[f.category] == "MASK"),
-        key=lambda f: (f.message_index, f.start, f.end, f.category),
+        key=lambda f: (f.message_index, f.start, -f.end, f.category),
     )
     if not masks:
         return ProtectionResult("ALLOW", [m.copy() for m in messages], counts)
-    for previous, current in pairwise(masks):
-        if previous.message_index == current.message_index and current.start < previous.end:
-            raise DetectorError("ambiguous_mask_overlap")
+    resolved = []
+    for current in masks:
+        if resolved:
+            previous = resolved[-1]
+            if previous.message_index == current.message_index and current.start < previous.end:
+                # Masking the containing value also covers nested findings, e.g. a host inside an email.
+                if current.end <= previous.end and (current.start, current.end) != (previous.start, previous.end):
+                    continue
+                raise DetectorError("ambiguous_mask_overlap")
+        resolved.append(current)
+    masks = resolved
     literal_markers = {
         match.group()
         for message in messages
