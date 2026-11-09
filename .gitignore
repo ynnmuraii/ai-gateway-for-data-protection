@@ -15,5 +15,6 @@ playwright-report/
 coverage.xml
 .coverage
 
-# Local project materials and context (kept on disk).
-/docs/
+# Keep working materials private; publish only the reviewed product documentation.
+/docs/*
+!/docs/public/
