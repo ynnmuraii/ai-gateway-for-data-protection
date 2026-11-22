@@ -1,0 +1,286 @@
+---
+- name: Deploy confidential AI gateway
+  hosts: all
+  become: false
+  gather_facts: false
+  any_errors_fatal: true
+
+  tasks:
+    - name: Verify passwordless sudo
+      command: sudo -n true
+      changed_when: false
+
+    - name: Verify Docker Compose plugin
+      command: docker compose version
+      changed_when: false
+
+    - name: Verify git
+      command: git --version
+      changed_when: false
+
+    - name: Ensure application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0750"
+      become: true
+
+    - name: Ensure backup directory
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0700"
+      become: true
+
+    - name: Require all deployment secrets
+      assert:
+        that:
+          - postgres_password | length > 0
+          - gateway_runtime_password | length > 0
+          - gateway_csrf_secret | length > 0
+          - gateway_pseudonym_secret | length > 0
+          - gateway_identity_secret | length > 0
+          - gateway_bootstrap_password | length > 0
+          - gateway_bootstrap_integration_key | length > 0
+          - webui_secret_key | length > 0
+          - webui_admin_password | length > 0
+          - webui_user_password | length > 0
+        fail_msg: >-
+          Required secrets are missing. Configure the production environment
+          secrets or export them before running ansible-playbook.
+      no_log: true
+
+    - name: Reject secrets that .env cannot encode safely
+      assert:
+        that:
+          - item is not search("['\r\n]")
+        fail_msg: "A secret contains a single quote or newline; refusing to render .env."
+      loop:
+        - "{{ postgres_password }}"
+        - "{{ gateway_runtime_password }}"
+        - "{{ gateway_csrf_secret }}"
+        - "{{ gateway_pseudonym_secret }}"
+        - "{{ gateway_identity_secret }}"
+        - "{{ gateway_bootstrap_password }}"
+        - "{{ gateway_bootstrap_integration_key }}"
+        - "{{ gateway_provider_secret }}"
+        - "{{ webui_secret_key }}"
+        - "{{ webui_admin_password }}"
+        - "{{ webui_user_password }}"
+      no_log: true
+
+    - name: Reject host vars that .env cannot encode safely
+      assert:
+        that:
+          - item is not search("['\r\n]")
+        fail_msg: "A host var contains a single quote or newline; refusing to render .env."
+      loop:
+        - "{{ gateway_public_origin }}"
+        - "{{ webui_url }}"
+        - "{{ gateway_provider_base_url }}"
+        - "{{ gateway_provider_label }}"
+        - "{{ gateway_provider_model }}"
+        - "{{ gateway_provider_allowed_hosts }}"
+        - "{{ gateway_provider_secret_ref }}"
+        - "{{ gateway_chat_model }}"
+        - "{{ gateway_bootstrap_username }}"
+        - "{{ webui_admin_email }}"
+        - "{{ webui_user_email }}"
+        - "{{ gateway_image }}"
+        - "{{ gateway_demo_mode }}"
+
+    - name: Fetch application source
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ deploy_ref }}"
+        force: true
+        update: true
+
+    - name: Render private environment file
+      template:
+        src: templates/env.j2
+        dest: "{{ app_dir }}/.env"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Validate Compose configuration
+      command: docker compose config --quiet
+      args:
+        chdir: "{{ app_dir }}"
+      changed_when: false
+      no_log: true
+
+    - name: Check PostgreSQL volume
+      command: docker volume inspect "{{ compose_project_name }}_postgres-data"
+      register: postgres_volume
+      changed_when: false
+      failed_when: false
+
+    - name: Determine whether this is the first deployment
+      set_fact:
+        first_deploy: "{{ postgres_volume.rc != 0 }}"
+
+    - name: Ensure PostgreSQL is running before backup
+      command: docker compose up -d --wait postgres
+      args:
+        chdir: "{{ app_dir }}"
+      when: not (first_deploy | bool)
+
+    - name: Back up PostgreSQL before migrations
+      shell: |
+        set -euo pipefail
+        mkdir -p "{{ backup_dir }}"
+        docker compose exec -T postgres pg_dump -U gateway_owner -d gateway \
+          | gzip > "{{ backup_dir }}/gateway-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+        find "{{ backup_dir }}" -type f -name '*.sql.gz' -mtime +14 -delete
+      args:
+        chdir: "{{ app_dir }}"
+        executable: /bin/bash
+      when: not (first_deploy | bool)
+
+    - name: Build gateway image on the host
+      command: docker compose build --pull
+      args:
+        chdir: "{{ app_dir }}"
+      when: gateway_image | length == 0
+
+    - name: Pull prebuilt gateway image
+      command: docker compose pull
+      args:
+        chdir: "{{ app_dir }}"
+      when: gateway_image | length > 0
+
+    - name: Stop gateway before migrations
+      command: docker compose stop gateway
+      args:
+        chdir: "{{ app_dir }}"
+      when: not (first_deploy | bool)
+
+    - name: Run database installation
+      command: docker compose run --rm install
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Upgrade detector profiles
+      command: docker compose --profile tools run --rm --no-deps upgrade-detector
+      args:
+        chdir: "{{ app_dir }}"
+      when: not (first_deploy | bool)
+
+    - name: Start the stack
+      command: docker compose up -d --wait --no-build
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: List running services
+      command: docker compose ps --status running --services
+      args:
+        chdir: "{{ app_dir }}"
+      register: running_services
+      changed_when: false
+
+    - name: Assert the public stack is running
+      assert:
+        that:
+          - "'postgres' in running_services.stdout_lines"
+          - "'gateway' in running_services.stdout_lines"
+          - "'openwebui' in running_services.stdout_lines"
+          - "'proxy' in running_services.stdout_lines"
+        fail_msg: "The stack did not reach the running state; inspect docker compose ps and logs."
+
+    - name: Provision Open WebUI users
+      command: docker compose --profile tools run --rm connect-openwebui
+      args:
+        chdir: "{{ app_dir }}"
+      when: (first_deploy | bool) or (run_connect_openwebui | bool)
+
+    - name: Show stack status
+      command: docker compose ps
+      args:
+        chdir: "{{ app_dir }}"
+      changed_when: false
+
+- name: Configure host nginx
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    nginx_site_path: "/etc/nginx/sites-available/{{ nginx_site_name }}.conf"
+    nginx_site_link: "/etc/nginx/sites-enabled/{{ nginx_site_name }}.conf"
+
+  tasks:
+    - name: Verify nginx is available
+      command: nginx -v
+      changed_when: false
+
+    - name: Render nginx site
+      template:
+        src: templates/nginx-site.conf.j2
+        dest: "{{ nginx_site_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      register: nginx_site
+
+    - name: Inspect the old placeholder link
+      stat:
+        path: "/etc/nginx/sites-enabled/{{ nginx_disable_site }}"
+        follow: false
+      register: nginx_old_stat
+      when: nginx_disable_site | length > 0
+
+    - name: Swap in and validate the new nginx site
+      block:
+        - name: Enable nginx site
+          file:
+            src: "{{ nginx_site_path }}"
+            dest: "{{ nginx_site_link }}"
+            state: link
+            force: true
+          register: nginx_link
+
+        - name: Disable the old placeholder site
+          file:
+            path: "/etc/nginx/sites-enabled/{{ nginx_disable_site }}"
+            state: absent
+          when: nginx_disable_site | length > 0
+          register: nginx_old
+
+        - name: Validate final nginx configuration
+          command: nginx -t
+          changed_when: false
+      rescue:
+        - name: Remove invalid nginx site link
+          file:
+            path: "{{ nginx_site_link }}"
+            state: absent
+
+        - name: Restore the previous nginx site link
+          file:
+            src: >-
+              {{ nginx_old_stat.stat.lnk_source | default('/etc/nginx/sites-available/' ~ nginx_disable_site) }}
+            dest: "/etc/nginx/sites-enabled/{{ nginx_disable_site }}"
+            state: link
+            force: true
+          when:
+            - nginx_disable_site | length > 0
+            - nginx_old_stat is defined
+            - nginx_old_stat.stat.exists | default(false)
+
+        - name: Fail after restoring the previous nginx file set
+          fail:
+            msg: "New nginx site failed validation; the previous sites-enabled state was restored."
+
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+      when: nginx_site.changed or nginx_link.changed or (nginx_old is defined and nginx_old.changed)
