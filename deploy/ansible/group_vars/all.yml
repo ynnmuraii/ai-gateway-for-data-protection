@@ -1,0 +1,11 @@
+---
+app_dir: /opt/confidential-ai-gateway
+backup_dir: /opt/confidential-ai-gateway-backups
+repo_url: https://github.com/ynnmuraii/ai-gateway-for-data-protection.git
+compose_project_name: confidential-ai-gateway
+
+deploy_ref: main
+
+gateway_image: ""
+
+run_connect_openwebui: false

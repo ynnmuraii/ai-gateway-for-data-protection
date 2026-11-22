@@ -1,0 +1,37 @@
+---
+# Non-sensitive, host-specific settings. Edit these before the first deploy.
+# Host nginx terminates TLS; Caddy inside compose stays on loopback.
+gateway_public_origin: "https://sk1fix.website"
+webui_url: "https://sk1fix.website"
+
+# Host nginx virtual host.
+nginx_site_name: confidential-ai-gateway
+nginx_server_name: sk1fix.website
+# Aliases are served with the same certificate and redirect to nginx_server_name.
+nginx_server_aliases:
+  - www.sk1fix.website
+nginx_ssl_certificate: /etc/letsencrypt/live/sk1fix.website/fullchain.pem
+nginx_ssl_certificate_key: /etc/letsencrypt/live/sk1fix.website/privkey.pem
+nginx_admin_upstream: "http://127.0.0.1:{{ gateway_admin_port }}"
+nginx_chat_upstream: "http://127.0.0.1:{{ gateway_chat_port }}"
+# Existing placeholder site returns 404. Leave the file in sites-available,
+# remove only its sites-enabled symlink. Set to "" to keep it.
+nginx_disable_site: sk1fix.website
+nginx_client_max_body_size: 10m
+
+# Provider settings are not secrets, but they are environment-specific.
+gateway_demo_mode: "false"
+gateway_provider_base_url: https://api.deepseek.com
+gateway_provider_label: DeepSeek
+gateway_provider_model: deepseek-flash
+gateway_provider_allowed_hosts: api.deepseek.com
+gateway_provider_secret_ref: provider-default
+gateway_chat_model: deepseek-flash
+
+gateway_bootstrap_username: admin
+webui_admin_email: operator@example.com
+webui_user_email: demo@example.com
+
+# Base-compose loopback ports exposed by Caddy for host nginx.
+gateway_admin_port: 8080
+gateway_chat_port: 3000

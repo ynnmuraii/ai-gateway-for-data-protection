@@ -1,0 +1,89 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm'
+        required: true
+      connect_openwebui:
+        description: "Re-run Open WebUI user provisioning on an existing stack"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: inputs.confirm == 'deploy' && github.ref == 'refs/heads/devops/s2-deploy'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out devops/s2-deploy
+        uses: actions/checkout@v4
+        with:
+          ref: devops/s2-deploy
+          fetch-depth: 0
+
+      - name: Install SSH client and Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-client
+          python -m pip install 'ansible-core==2.17.*'
+
+      - name: Load SSH key into ssh-agent
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          key="$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
+          chmod 600 "$key"
+          ssh-keygen -y -f "$key" > /dev/null
+
+          eval "$(ssh-agent -s)"
+          ssh-add "$key"
+          ssh-add -l
+
+          {
+            echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+          } >> "$GITHUB_ENV"
+
+      - name: Deploy
+        working-directory: deploy/ansible
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          GATEWAY_RUNTIME_PASSWORD: ${{ secrets.GATEWAY_RUNTIME_PASSWORD }}
+          GATEWAY_CSRF_SECRET: ${{ secrets.GATEWAY_CSRF_SECRET }}
+          GATEWAY_PSEUDONYM_SECRET: ${{ secrets.GATEWAY_PSEUDONYM_SECRET }}
+          GATEWAY_IDENTITY_SECRET: ${{ secrets.GATEWAY_IDENTITY_SECRET }}
+          GATEWAY_BOOTSTRAP_PASSWORD: ${{ secrets.GATEWAY_BOOTSTRAP_PASSWORD }}
+          GATEWAY_BOOTSTRAP_INTEGRATION_KEY: ${{ secrets.GATEWAY_BOOTSTRAP_INTEGRATION_KEY }}
+          GATEWAY_PROVIDER_SECRET: ${{ secrets.GATEWAY_PROVIDER_SECRET }}
+          WEBUI_SECRET_KEY: ${{ secrets.WEBUI_SECRET_KEY }}
+          WEBUI_ADMIN_PASSWORD: ${{ secrets.WEBUI_ADMIN_PASSWORD }}
+          WEBUI_USER_PASSWORD: ${{ secrets.WEBUI_USER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ansible-playbook playbook.yml \
+            -e "deploy_ref=$(git rev-parse HEAD)" \
+            -e "run_connect_openwebui=${{ inputs.connect_openwebui }}"
+
+      - name: Stop ssh-agent
+        if: always()
+        run: |
+          ssh-agent -k || true
+          rm -f "$RUNNER_TEMP/deploy_key"

@@ -1,0 +1,5 @@
+all:
+  hosts:
+    sk1fix.website:
+      ansible_host: 168.113.156.230
+      ansible_user: tech_user

@@ -81,6 +81,130 @@ docker compose --env-file .env.compose down
 
 Для настоящего LLM настройте один внешний OpenAI-совместимый endpoint. Проверена интеграция с DeepSeek Flash; [настройка провайдера, обновление и HTTPS](docs/public/operations.md).
 
+## Деплой
+
+Тестовый стенд разворачивается из ветки `devops/s2-deploy` вручную через GitHub Actions. `checks.yml` запускается автоматически на push/PR, а деплой — только через `workflow_dispatch` с `confirm=deploy`. Workflow привязан к ветке: запуск из `main` или другого ref будет skipped.
+
+### Что должно быть на сервере
+
+- Linux, Docker Engine с Compose plugin, `git`;
+- установленный и запущенный nginx;
+- действующий Let's Encrypt-сертификат для домена (`fullchain.pem` и `privkey.pem`);
+- DNS домена на сервер, открытые `80`/`443`/`8443`;
+- SSH-пользователь с ключом; если это не `root`, то с `sudo` без пароля.
+
+Ansible не устанавливает Docker, nginx, пакеты или сертификаты. Отдельного bootstrap-шага нет: если Docker Compose, git или nginx отсутствуют, деплой упадёт на preflight. Playbook проверяет окружение, создаёт рабочие каталоги, обновляет код, генерирует `.env`, делает backup БД, поднимает compose и обновляет nginx site.
+
+`deploy/ansible/inventory.yml` содержит только адрес и пользователя. Приватный ключ не лежит в inventory: workflow загружает его из `DEPLOY_SSH_KEY` в `ssh-agent`, а Ansible подхватывает агент автоматически. Сейчас inventory настроен на `root`; если переключать на `tech_user`, его публичный ключ должен быть в `/home/tech_user/.ssh/authorized_keys`, а в inventory нужно поменять `ansible_user`.
+
+### Переменные
+
+Секреты добавляются в GitHub Environment `production`:
+
+| Secret | Обязателен | Назначение |
+|---|---|---|
+| `DEPLOY_SSH_KEY` | да | приватный SSH-ключ для Ansible |
+| `DEPLOY_KNOWN_HOSTS` | да | публичный host-key сервера для адреса из inventory |
+| `POSTGRES_PASSWORD` | да | пароль owner-роли PostgreSQL |
+| `GATEWAY_RUNTIME_PASSWORD` | да | пароль runtime-роли PostgreSQL |
+| `GATEWAY_CSRF_SECRET` | да | CSRF-секрет gateway |
+| `GATEWAY_PSEUDONYM_SECRET` | да | секрет псевдонимизации |
+| `GATEWAY_IDENTITY_SECRET` | да | JWT-секрет gateway/Open WebUI |
+| `GATEWAY_BOOTSTRAP_PASSWORD` | да | пароль администратора панели при первой инициализации |
+| `GATEWAY_BOOTSTRAP_INTEGRATION_KEY` | да | ключ интеграции gateway ↔ Open WebUI |
+| `GATEWAY_PROVIDER_SECRET` | при `demo=false` | API-ключ DeepSeek или другого OpenAI-совместимого провайдера |
+| `WEBUI_SECRET_KEY` | да | секрет Open WebUI |
+| `WEBUI_ADMIN_PASSWORD` | да | пароль админа Open WebUI при первой настройке |
+| `WEBUI_USER_PASSWORD` | да | пароль демо-пользователя Open WebUI при первой настройке |
+
+`GATEWAY_DATABASE_URL` и `GATEWAY_INSTALL_DATABASE_URL` отдельными секретами не добавляются: Ansible собирает их из паролей БД и URL-кодирует.
+
+`DEPLOY_KNOWN_HOSTS` должен содержать host-key для того же адреса, который указан в `inventory.yml` (сейчас это IP). Иначе SSH не пройдёт проверку host key.
+
+Нечувствительные параметры лежат в репозитории:
+
+| Где | Что |
+|---|---|
+| `deploy/ansible/host_vars/gateway/main.yml` | `GATEWAY_PUBLIC_ORIGIN`, `WEBUI_URL`, nginx site/domain/aliases/cert paths/upstreams/body size/`nginx_disable_site`, provider base URL/label/model/allowed hosts, `GATEWAY_CHAT_MODEL`, `GATEWAY_DEMO_MODE`, `GATEWAY_BOOTSTRAP_USERNAME`, email’ы Open WebUI, loopback-порты Caddy |
+| `deploy/ansible/group_vars/all.yml` | каталоги приложения и backup, repo URL, compose project, `deploy_ref` по умолчанию, `gateway_image`, флаг повторного `connect-openwebui` |
+| `deploy/env/openwebui.env` | статические флаги Open WebUI |
+| `deploy/env/gateway.env` | `GATEWAY_DETECTOR_WORKERS`, `GATEWAY_DETECTOR_QUEUE_SIZE` |
+| `deploy/env/postgres.env` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_INITDB_ARGS` |
+
+Ansible генерирует `/opt/confidential-ai-gateway/.env` с правами `0600`. В нём лежат секреты и значения для `${...}`-подстановки Compose. В репозиторий этот файл не попадает.
+
+Важно:
+
+- `POSTGRES_PASSWORD` и `GATEWAY_BOOTSTRAP_INTEGRATION_KEY` должны оставаться стабильными после первой установки;
+- `GATEWAY_RUNTIME_PASSWORD` можно менять — `install` обновляет роль;
+- `GATEWAY_BOOTSTRAP_PASSWORD` действует только при первой инициализации БД;
+- `WEBUI_ADMIN_PASSWORD` и `WEBUI_USER_PASSWORD` используются при первичной настройке Open WebUI;
+- смена `GATEWAY_CSRF_SECRET`, `GATEWAY_PSEUDONYM_SECRET`, `GATEWAY_IDENTITY_SECRET` или `WEBUI_SECRET_KEY` инвалидирует сессии/маркеры;
+- `GATEWAY_PROVIDER_SECRET` можно ротировать, после чего gateway пересоздаётся при деплое.
+
+### Как запускать
+
+1. Заполнить `deploy/ansible/inventory.yml` — адрес и пользователь.
+2. Проверить `deploy/ansible/host_vars/gateway/main.yml` — домен, пути к сертификату, provider, `nginx_disable_site`.
+3. Создать GitHub Environment `production`, добавить секреты из таблицы и, по желанию, required reviewers.
+4. Убедиться, что DNS и Let's Encrypt-сертификат уже действуют на сервере.
+5. Запустить workflow из ветки `devops/s2-deploy`:
+
+```shell
+gh workflow run deploy.yml \
+  --ref devops/s2-deploy \
+  -f confirm=deploy
+```
+
+Или в GitHub UI: **Actions → deploy → Run workflow**, ветка `devops/s2-deploy`, `confirm=deploy`.
+
+`connect_openwebui` по умолчанию `false`: на первой установке провижининг Open WebUI запускается автоматически. Поставь `true`, если нужно принудительно повторить его на существующем стенде:
+
+```shell
+gh workflow run deploy.yml \
+  --ref devops/s2-deploy \
+  -f confirm=deploy \
+  -f connect_openwebui=true
+```
+
+### Что делает деплой
+
+```mermaid
+flowchart LR
+    A["workflow_dispatch<br/>devops/s2-deploy"] --> B["GitHub Actions<br/>environment: production"]
+    B --> C["Ansible over SSH<br/>ssh-agent + known_hosts"]
+    C --> D["git checkout<br/>render .env 0600"]
+    D --> E["pg_dump"]
+    E --> F["docker compose<br/>build/pull + up --wait"]
+    F --> G["Caddy loopback<br/>:8080 / :3000"]
+    G --> H["gateway / Open WebUI"]
+    H --> I[("PostgreSQL")]
+    F --> J["nginx site<br/>nginx -t + reload"]
+    K["браузер :443"] --> J
+    J --> G
+```
+
+Порядок в playbook:
+
+1. проверяет `sudo -n`, Docker Compose, git и nginx;
+2. создаёт `/opt/confidential-ai-gateway` и `/opt/confidential-ai-gateway-backups`;
+3. обновляет исходники до SHA ветки;
+4. генерирует `.env`;
+5. делает `pg_dump` перед миграциями;
+6. собирает/подтягивает образ, запускает `install`, останавливает gateway, обновляет detector-профили;
+7. поднимает стек и ждёт healthy;
+8. на первой установке запускает `connect-openwebui`;
+9. создаёт `/etc/nginx/sites-available/confidential-ai-gateway.conf`, валидирует `nginx -t` и перезагружает nginx.
+
+| Открыть | Адрес |
+| --- | --- |
+| Панель администратора | `https://sk1fix.website/admin/` |
+| Чат Open WebUI | `https://sk1fix.website/` |
+
+`www.sk1fix.website` и `:8443` редиректят на канонический `https://sk1fix.website`; `/v1` снаружи закрыт. TLS терминирует host nginx. Caddy внутри compose остаётся на loopback как внутренний маршрутизатор/фильтр и TLS не терминирует.
+
+Полный список секретов, nginx-маршруты и ручные операции — в [operations.md](docs/public/operations.md).
+
 ## Из чего состоит
 
 ```mermaid
