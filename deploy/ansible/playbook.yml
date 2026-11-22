@@ -81,8 +81,6 @@
       loop:
         - "{{ gateway_public_origin }}"
         - "{{ webui_url }}"
-        - "{{ gateway_domain_admin }}"
-        - "{{ gateway_domain_chat }}"
         - "{{ gateway_provider_base_url }}"
         - "{{ gateway_provider_label }}"
         - "{{ gateway_provider_model }}"
