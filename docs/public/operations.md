@@ -35,7 +35,7 @@ Playbook:
 3. обновляет исходники до SHA ветки;
 4. генерирует `/opt/confidential-ai-gateway/.env` с правами `0600`;
 5. делает `pg_dump`;
-6. собирает/поднимает compose, обновляет detector-профили при необходимости;
+6. собирает/поднимает compose, обновляет detector-профили при необходимости; на первой установке запускает `connect-openwebui` с `--verify-live` для реального провайдера (3 синтетических платных запроса);
 7. создаёт `/etc/nginx/sites-available/confidential-ai-gateway.conf`, включает его и перезагружает nginx после `nginx -t`.
 
 Host nginx терминирует TLS и проксирует `/admin/` в gateway, `/` — в Open WebUI; `/v1` снаружи закрыт. Caddy внутри compose остаётся на loopback `127.0.0.1:8080` и `127.0.0.1:3000`.

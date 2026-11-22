@@ -202,7 +202,7 @@ flowchart LR
 5. делает `pg_dump` перед миграциями;
 6. собирает/подтягивает образ, запускает `install`, останавливает gateway, обновляет detector-профили;
 7. поднимает стек и ждёт healthy;
-8. на первой установке запускает `connect-openwebui`;
+8. на первой установке запускает `connect-openwebui`; для реального провайдера — с `--verify-live` (3 коротких платных синтетических запроса);
 9. создаёт `/etc/nginx/sites-available/confidential-ai-gateway.conf`, валидирует `nginx -t` и перезагружает nginx.
 
 | Открыть | Адрес |

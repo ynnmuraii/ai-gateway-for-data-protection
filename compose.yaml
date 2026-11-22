@@ -117,7 +117,7 @@ services:
       WEBUI_ADMIN_PASSWORD: ${WEBUI_ADMIN_PASSWORD:?Required}
       WEBUI_USER_EMAIL: ${WEBUI_USER_EMAIL:?Required}
       WEBUI_USER_PASSWORD: ${WEBUI_USER_PASSWORD:?Required}
-    command: [python, scripts/connect-openwebui.py, --internal, --url, http://openwebui:8080]
+    command: [python, scripts/connect-openwebui.py, --internal, --url, http://openwebui:8080, --verify-live]
     depends_on:
       gateway: {condition: service_healthy}
       openwebui: {condition: service_healthy}
