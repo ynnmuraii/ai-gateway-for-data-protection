@@ -1,5 +1,6 @@
+# The host key must stay "gateway": host_vars/gateway/ is keyed by it.
 all:
   hosts:
-    sk1fix.website:
+    gateway:
       ansible_host: 168.113.156.230
       ansible_user: tech_user
