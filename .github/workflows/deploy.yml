@@ -11,7 +11,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: [devops/s2-deploy]
+    branches: [main]
 
 permissions:
   contents: read
@@ -23,16 +23,16 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/devops/s2-deploy' && (github.event_name == 'workflow_dispatch' && inputs.confirm == 'deploy' || github.event_name == 'push' && contains(github.event.head_commit.message, '[deploy]'))
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' && inputs.confirm == 'deploy' || github.event_name == 'push' && contains(github.event.head_commit.message, '[deploy]'))
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 60
 
     steps:
-      - name: Check out devops/s2-deploy
+      - name: Check out main
         uses: actions/checkout@v4
         with:
-          ref: devops/s2-deploy
+          ref: main
           fetch-depth: 0
 
       - name: Install SSH client and Ansible
@@ -66,7 +66,6 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Wait for CI checks
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

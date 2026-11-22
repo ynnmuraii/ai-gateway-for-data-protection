@@ -83,7 +83,9 @@ docker compose --env-file .env.compose down
 
 ## Деплой
 
-Тестовый стенд разворачивается из ветки `devops/s2-deploy` через GitHub Actions. `checks.yml` запускается автоматически на push/PR. Деплой запускается вручную через `workflow_dispatch` (`confirm=deploy`) или push с маркером `[deploy]`; в push-режиме CD ждёт успешного завершения `checks.yml`. Workflow привязан к ветке: запуск из `main` или другого ref будет skipped.
+Деплой идёт из ветки `main` через GitHub Actions. `checks.yml` запускается автоматически на push/PR. Деплой запускается вручную через `workflow_dispatch` (`confirm=deploy`) или push с маркером `[deploy]`; CD ждёт успешного завершения `checks.yml` на том же SHA. Workflow привязан к `main`: запуск из другой ветки будет skipped.
+
+Merge PR сам по себе не деплоит, если в сообщении merge-коммита нет `[deploy]`. В этом случае запушь пустой commit с маркером или запусти workflow вручную.
 
 ### Что должно быть на сервере
 
@@ -148,30 +150,30 @@ Ansible генерирует `/opt/confidential-ai-gateway/.env` с правам
 2. Проверить `deploy/ansible/host_vars/gateway/main.yml` — домен, пути к сертификату, provider, `nginx_disable_site`.
 3. Создать GitHub Environment `production`, добавить секреты из таблицы и, по желанию, required reviewers.
 4. Убедиться, что DNS и Let's Encrypt-сертификат уже действуют на сервере.
-5. Запустить workflow из ветки `devops/s2-deploy`:
+5. Запустить workflow из ветки `main`:
 
 ```shell
 gh workflow run deploy.yml \
-  --ref devops/s2-deploy \
+  --ref main \
   -f confirm=deploy
 ```
 
-Или в GitHub UI: **Actions → deploy → Run workflow**, ветка `devops/s2-deploy`, `confirm=deploy`.
+Или в GitHub UI: **Actions → deploy → Run workflow**, ветка `main`, `confirm=deploy`.
 
 Альтернатива без UI — push с маркером `[deploy]`:
 
 ```shell
 git commit --allow-empty -m "chore(deploy): run [deploy]"
-git push origin devops/s2-deploy
+git push origin main
 ```
 
-CD запустится после push, дождётся успешного `checks.yml` на этом SHA и только затем выполнит Ansible. Обычные push без `[deploy]` создают skipped-run и ничего не деплоят.
+CD запустится после push/merge в `main`, дождётся успешного `checks.yml` на этом SHA и только затем выполнит Ansible. Обычные push без `[deploy]` создают skipped-run и ничего не деплоят.
 
 `connect_openwebui` по умолчанию `false`: на первой установке провижининг Open WebUI запускается автоматически. Поставь `true`, если нужно принудительно повторить его на существующем стенде:
 
 ```shell
 gh workflow run deploy.yml \
-  --ref devops/s2-deploy \
+  --ref main \
   -f confirm=deploy \
   -f connect_openwebui=true
 ```
@@ -180,7 +182,7 @@ gh workflow run deploy.yml \
 
 ```mermaid
 flowchart LR
-    A["workflow_dispatch<br/>devops/s2-deploy"] --> B["GitHub Actions<br/>environment: production"]
+    A["workflow_dispatch<br/>main"] --> B["GitHub Actions<br/>environment: production"]
     B --> C["Ansible over SSH<br/>ssh-agent + known_hosts"]
     C --> D["git checkout<br/>render .env 0600"]
     D --> E["pg_dump"]
