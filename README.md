@@ -83,7 +83,7 @@ docker compose --env-file .env.compose down
 
 ## Деплой
 
-Тестовый стенд разворачивается из ветки `devops/s2-deploy` вручную через GitHub Actions. `checks.yml` запускается автоматически на push/PR, а деплой — только через `workflow_dispatch` с `confirm=deploy`. Workflow привязан к ветке: запуск из `main` или другого ref будет skipped.
+Тестовый стенд разворачивается из ветки `devops/s2-deploy` через GitHub Actions. `checks.yml` запускается автоматически на push/PR. Деплой запускается вручную через `workflow_dispatch` (`confirm=deploy`) или push с маркером `[deploy]`; в push-режиме CD ждёт успешного завершения `checks.yml`. Workflow привязан к ветке: запуск из `main` или другого ref будет skipped.
 
 ### Что должно быть на сервере
 
@@ -157,6 +157,15 @@ gh workflow run deploy.yml \
 ```
 
 Или в GitHub UI: **Actions → deploy → Run workflow**, ветка `devops/s2-deploy`, `confirm=deploy`.
+
+Альтернатива без UI — push с маркером `[deploy]`:
+
+```shell
+git commit --allow-empty -m "chore(deploy): run [deploy]"
+git push origin devops/s2-deploy
+```
+
+CD запустится после push, дождётся успешного `checks.yml` на этом SHA и только затем выполнит Ansible. Обычные push без `[deploy]` создают skipped-run и ничего не деплоят.
 
 `connect_openwebui` по умолчанию `false`: на первой установке провижининг Open WebUI запускается автоматически. Поставь `true`, если нужно принудительно повторить его на существующем стенде:
 

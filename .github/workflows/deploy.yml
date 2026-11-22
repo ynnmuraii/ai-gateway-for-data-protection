@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: production-deploy
@@ -63,6 +64,29 @@ jobs:
             echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
             echo "SSH_AGENT_PID=$SSH_AGENT_PID"
           } >> "$GITHUB_ENV"
+
+      - name: Wait for CI checks
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 120); do
+            result=$(gh run list \
+              --workflow checks.yml \
+              --commit "$GITHUB_SHA" \
+              --limit 1 \
+              --json status,conclusion \
+              --jq '.[0] // empty | "\(.status) \(.conclusion)"')
+            echo "checks: ${result:-not started}"
+            case "$result" in
+              "completed success") exit 0 ;;
+              "completed "*) echo "checks failed"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "timed out waiting for checks"
+          exit 1
 
       - name: Deploy
         working-directory: deploy/ansible

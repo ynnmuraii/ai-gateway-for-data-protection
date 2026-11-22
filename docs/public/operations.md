@@ -4,7 +4,7 @@
 
 ## Тестовый деплой: GitHub Actions + Ansible
 
-Ветка деплоя — `devops/s2-deploy`. Workflow `.github/workflows/deploy.yml` запускается только вручную (`workflow_dispatch`, `confirm=deploy`) и использует GitHub Environment `production`. Автоматический CI (`checks.yml`) работает отдельно на push/PR.
+Ветка деплоя — `devops/s2-deploy`. Workflow `.github/workflows/deploy.yml` запускается вручную (`workflow_dispatch`, `confirm=deploy`) или push с маркером `[deploy]` и использует GitHub Environment `production`. Автоматический CI (`checks.yml`) работает на push/PR; в push-режиме CD ждёт успешного завершения CI на том же SHA.
 
 На сервере должны быть заранее установлены Docker Compose, nginx и действующий Let's Encrypt-сертификат для домена. Playbook не устанавливает пакеты, Docker или сертификаты. Ansible подключается по SSH через `ssh-agent`; inventory содержит только адрес и пользователя.
 
